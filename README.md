@@ -78,6 +78,11 @@ Click "Uninstall" from the Plugin Manager to:
 
 ---
 
+## TO DO:
+
+- fix the variable values in the form when reloading the editor.
+- maybe change the image logo size via the form using GD Library?
+
 ## 📜 License
 
 This plugin is released under the MIT License.  
