@@ -1,0 +1,12 @@
+<plugin>
+  <name>rebrand</name>
+  <display>UserSpice ReBrand</display> 
+  <author>Daniel Foscarini</author>
+  <website>https://tocsindata.com/</website>
+  <version>1.0.9</version>
+  <release>July 11, 2025</release>
+  <tested>5.8.4</tested>
+  <fa_icon>fa fa-paint-brush</fa_icon>
+  <description>Allows user ID 1 to rebrand the UserSpice install, including custom logos and frontend branding.</description>
+  <button>configure.php</button>
+</plugin>
