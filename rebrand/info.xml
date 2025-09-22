@@ -1,12 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <plugin>
-  <name>rebrand</name>
-  <display>UserSpice ReBrand</display> 
-  <author>Daniel Foscarini</author>
-  <website>https://tocsindata.com/</website>
-  <version>1.0.9</version>
-  <release>July 11, 2025</release>
-  <tested>5.8.4</tested>
-  <fa_icon>fa fa-paint-brush</fa_icon>
-  <description>Allows user ID 1 to rebrand the UserSpice install, including custom logos and frontend branding.</description>
-  <button>ReBrand</button>
+  <!-- Basic metadata -->
+  <name>UserSpice ReBrand</name>
+  <slug>rebrand</slug>
+  <version>2.0.0</version>
+  <description>
+    Manage site branding in UserSpice: logo preview & updates, offline favicon/app icon generation,
+    safe head/menu integration with backups, and cache-busting. User ID 1 only.
+  </description>
+
+  <!-- Author / project -->
+  <author>Tocsin Data</author>
+  <author_url>https://github.com/tocsindata</author_url>
+  <project_url>https://github.com/tocsindata/userspice_rebrand_plugin</project_url>
+  <license>MIT</license>
+
+  <!-- Compatibility -->
+  <min_userspice_version>5.0.0</min_userspice_version>
+  <tested_userspice_version>5.x</tested_userspice_version>
+  <php_min>7.4</php_min>
+  <php_max>8.3</php_max>
+
+  <!-- Paths (relative to /usersc/plugins/rebrand) -->
+  <folder>rebrand</folder>
+  <install_file>install.php</install_file>
+  <uninstall_file>uninstall.php</uninstall_file>
+  <admin_page>admin/settings.php</admin_page>
+  <changelog>CHANGELOG.md</changelog>
+  <readme>README.md</readme>
+
+  <!-- Dependencies -->
+  <dependencies>
+    <dependency type="plugin" required="true">
+      <name>Form Builder</name>
+      <project_url>https://github.com/mudmin/usplugins/tree/master/src/forms</project_url>
+      <reason>Provides CSRF token helpers used by ReBrand admin forms.</reason>
+    </dependency>
+    <dependency type="php_extension" required="false">
+      <name>gd</name>
+      <reason>Used for image resizing and offline icon generation. If missing, generation is disabled.</reason>
+    </dependency>
+    <dependency type="php_extension" required="false">
+      <name>imagick</name>
+      <reason>Optional alternative to GD; improves icon generation quality when available.</reason>
+    </dependency>
+  </dependencies>
+
+  <!-- Security & access -->
+  <admin_only>true</admin_only>
+  <user_id_1_only>true</user_id_1_only>
+
+  <!-- Features toggles (defaults) -->
+  <features>
+    <feature key="logo_manager" default="true" />
+    <feature key="favicon_generator_offline" default="true" />
+    <feature key="head_tags_patch" default="true" />
+    <feature key="menu_patch" default="true" />
+    <feature key="pwa_tags_commented" default="true" />
+  </features>
 </plugin>

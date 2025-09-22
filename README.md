@@ -1,89 +1,137 @@
 # UserSpice ReBrand Plugin
 
-**Version:** 1.0.0  
-**Author:** Daniel Foscarini  
-**Tested With:** UserSpice 5.8.4  
-**Website:** [https://tocsindata.com](https://tocsindata.com)
+> Seamlessly manage your site branding in UserSpice: logo preview & updates, offline favicon/app icon generation, cache-busting, and safe header/menu integration — all from one admin screen.
 
----
+## Key Features
+- **User ID 1 only**: Only the primary owner (user id = 1) can change branding.
+- **Logo manager with preview**: Upload (PNG/JPG), optional resize, instant preview, and cache-busted delivery.
+- **Offline favicon/app icons generator**: No external calls. Generates:
+  - `.ico` with 16/32/48 (optionally 64) layers,
+  - PNG set (180/192/256/384/512) for modern browsers/PWAs,
+  - Pre-baked HTML snippet for `<head>` (PWA-related tags **commented by default**).
+- **Head tags integration**: Safely injects favicon `<link>`s (and commented PWA tags) into `usersc/includes/head_tags.php` between plugin markers. Automatic timestamped backups and one-click revert.
+- **Menu DB integration**: Injects/updates the **logo block** and **social links** inside the UserSpice **menu tables** only within plugin markers; keeps row-level backups and supports restore.
+- **Cache-busting**: Every asset update increments `asset_version`, appended like `?v=<n>` to defeat stale caches.
 
-## 📌 Description
+## Requirements
+- **UserSpice v5** (tested against current master).
+- **Form Builder plugin** (for CSRF tokens and secure form handling):  
+  https://github.com/mudmin/usplugins/tree/master/src/forms  
+  > Install & enable **Form Builder** before using ReBrand. This plugin depends on its CSRF token helpers.
+- **PHP GD** (preferred) or Imagick for image processing.  
+  If neither is available, you can still upload a favicon/logo, but offline generation/resizing is disabled.
 
-**UserSpice ReBrand** allows you to customize the front-end branding of your UserSpice site without modifying core files. It supports dynamic logo replacement, custom alt text, icon placement, responsive CSS injection, and social media branding with FontAwesome icons — all scoped to your selected navigation menu.
+## Installation (via UI)
+1. Copy this plugin folder to:  
+   `usersc/plugins/rebrand/`
+2. In the UserSpice admin, go to **Plugins → ReBrand → Install**.
+3. Ensure **Form Builder** is installed and enabled.
+4. Navigate to **Plugins → ReBrand → Settings**. You must be **User ID 1** to access it.
 
-This plugin was designed for User ID 1 (Super Admin) to streamline rebranding during deployments and white-label installations.
+## Quick install via CLI (AWS/Linux)
+> Use this if you have shell/terminal access (e.g., EC2). Adjust the web root path and web user/group for your stack.
 
----
+**Option A: clone then move**
+```bash
+cd /var/www/html
+git clone https://github.com/tocsindata/userspice_rebrand_plugin.git
+mkdir -p usersc/plugins
+mv userspice_rebrand_plugin usersc/plugins/rebrand
+# Set permissions/ownership for your web server user (examples below)
+sudo chown -R www-data:www-data usersc/plugins/rebrand    # Debian/Ubuntu
+# or
+sudo chown -R apache:apache usersc/plugins/rebrand        # Amazon Linux/AlmaLinux/RHEL
+````
 
-## 🚀 Features
+**Option B: clone directly into the target folder (no mv)**
 
-- ✅ Upload and replace `logo.png` (used in site navigation)
-- ✅ Inject scoped CSS directly into `<head>` (logo-specific)
-- ✅ Set custom image `alt` text and dimensions
-- ✅ Assign branding to a specific `us_menus` row
-- ✅ Manage FontAwesome social icons (size, color, URL, label)
-- ✅ Auto-creates all required plugin tables on install
-- ✅ Compatible with both old and new UserSpice hook systems
+```bash
+cd /var/www/html
+mkdir -p usersc/plugins
+git clone https://github.com/tocsindata/userspice_rebrand_plugin.git usersc/plugins/rebrand
+sudo chown -R www-data:www-data usersc/plugins/rebrand    # or apache:apache
+```
 
----
+**Don’t forget:** install the **Form Builder** plugin too (required for CSRF):
 
-## 🔧 Installation
+```bash
+# Example: place Form Builder under usplugins if needed, or follow its README
+# https://github.com/mudmin/usplugins/tree/master/src/forms
+```
 
-1. **Copy the plugin folder** to:  
-   `usersc/plugins/rebrand`
+Then log into UserSpice admin:
 
-2. **Run the installation script** by clicking "Activate" in the Plugin Manager.  
-   This will:
-   - Register the plugin in `us_plugins`
-   - Create all required tables
-   - Inject branding hook into `<head>` if supported
+* Go to **Plugins → ReBrand → Install**
+* Verify **Form Builder** is enabled
+* Open **Plugins → ReBrand → Settings** to configure
 
-3. **Configure the plugin** via:  
-   `Admin Dashboard → Plugins → Configure → Tocsin ReBrand`
+## What this plugin edits / creates
 
----
+* **File:** `usersc/includes/head_tags.php`
 
-## 🖼️ Usage
+  * Injects favicon `<link>`s and (commented) PWA tags **between**:
 
-- Replace the site logo by uploading a new `logo.png` via the plugin interface.
-- Add optional custom CSS that applies **only** to the logo using the “Logo CSS” textarea.
-- Assign the updated logo and icons to any `us_menus` menu by selecting it from the dropdown.
-- Social media icons can be added with FontAwesome classes, URLs, and optional labels.
+    ```html
+    <!-- ReBrand START -->
+    ... plugin-managed content ...
+    <!-- ReBrand END -->
+    ```
+  * Makes a **timestamped backup** before every write.
+* **Directory:** `users/images/rebrand/`
 
----
+  * Stores `logo.png` (and optional dark variant).
+* **Directory:** `users/images/rebrand/icons/`
 
-## ⚠️ Notes
+  * Stores generated `.ico` and PNG icon sizes for favicons/PWAs.
+* **Database:** UserSpice **menu tables**
 
-- The plugin is restricted to `User ID 1` for security and control.
-- All logo uploads overwrite `/users/images/logo.png`.
-- Existing hook conflicts from prior versions (e.g. `TocsinReBrand`) may prevent functionality. These must be removed manually if lingering in `us_plugin_hooks`.
+  * Patches only the content **inside our markers** in the specific menu rows/items that render the header logo/social links.
+  * Keeps **row-level backups** in a plugin-managed backup table for one-click **revert**.
 
----
+## Access Control & Security
 
-## 📂 Database Tables Created
+* **User ID 1 only** can view and apply changes.
+* **CSRF** protection via **Form Builder** tokens on all POSTs.
+* **Strict file handling**:
 
-- `plg_tocsinrebrand` — stores logo path, alt text, CSS, and domain
-- `plg_tocsinrebrand_settings` — menu assignment and icon preferences
-- `plg_tocsinrebrand_icons` — list of FontAwesome icons and links
+  * MIME validation (magic bytes), extension whitelist,
+  * max file size & dimension caps,
+  * atomic writes to avoid partial files,
+  * no user-controlled filesystem paths.
+* **XSS-safe** display of admin-entered fields (URLs, alt text, etc.).
+* **URL validation** for social links (http/https only).
 
----
+## Admin Workflow (high level)
 
-## 🔄 Uninstallation
+1. **Logo**: Upload → optional resize → Save. Preview updates immediately; `asset_version` increments.
+2. **Favicons**: Choose single-file mode or **Generate offline icons**. Generated snippet (with PWA lines commented) is saved and ready for insertion.
+3. **Apply Head Tags**: Toggle to update `usersc/includes/head_tags.php`. You can view a diff and **revert**.
+4. **Menu Integration**: Select target **menu items** to patch. The plugin injects only within markers; you can **revert** to the pre-patch snapshot.
+5. **Social Links**: Toggle per-platform and enter URLs. The plugin regenerates the icons list inside the markers.
 
-Click "Uninstall" from the Plugin Manager to:
+## Uninstall / Cleanup
 
-- Drop all related tables
-- Unregister hooks
-- Remove plugin entry from `us_plugins`
+* Disables menu patches (optional restore) and removes plugin settings.
+* Leaves file backups unless you explicitly choose to remove them.
+* Leaves `usersc/includes/head_tags.php` in its last good state unless you revert first (recommended).
 
----
+## Troubleshooting
 
-## TO DO:
+* **No changes visible?** Clear your browser cache. The plugin uses cache-busting, but CDNs/proxies may still hold old assets.
+* **Missing CSRF token errors?** Ensure the **Form Builder** plugin is installed and enabled.
+* **Image upload fails?** Check PHP GD availability and file size limits; verify write permissions on `users/images/rebrand/`.
 
-- fix the variable values in the form when reloading the editor.
-- maybe change the image logo size via the form using GD Library?
+## License
 
-## 📜 License
+MIT (see `LICENSE`).
 
-This plugin is released under the MIT License.  
-© 2025 Daniel Foscarini
+## Changelog (highlights)
+
+* `v1.0.0` — Initial release with:
+
+  * User ID 1 gating, Form Builder CSRF,
+  * Logo preview & cache-busting,
+  * Offline favicon/app icons generator,
+  * Head tags patching with backups & markers,
+  * Menu DB patching (logo + socials) with backups.
+ 
