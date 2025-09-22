@@ -16,12 +16,20 @@
  * NOTE: This file is UI-only. All mutating actions are handled by admin/process.php.
  */
 
-if (!defined('ABS_US_ROOT') && !defined('US_URL_ROOT') && !isset($abs_us_root)) {
-  $root = realpath(__DIR__ . '/../../..'); // usersc/plugins/rebrand -> usersc
-  $init = $root . '/users/init.php';
-  if (file_exists($init)) {
-    require_once $init;
-  }
+$init = null;
+for ($i = 0; $i < 6; $i++) {
+  $try = realpath(__DIR__ . str_repeat(DIRECTORY_SEPARATOR . '..', $i) . '/users/init.php');
+  if ($try && file_exists($try)) { $init = $try; break; }
+}
+if ($init) {
+  require_once $init;
+} else {
+  die('ReBrand: could not locate users/init.php');
+}
+
+// Ensure we have a DB instance even if $db isn't global in this scope
+if (!isset($db) || !($db instanceof DB)) {
+  $db = DB::getInstance();
 }
 
 if (!isset($db)) {
