@@ -5,7 +5,7 @@
   <slug>rebrand</slug>
   <version>2.0.0</version>
   <description>
-    Manage site branding in UserSpice: logo preview & updates, offline favicon/app icon generation,
+    Manage site branding in UserSpice: logo preview &amp; updates, offline favicon/app icon generation,
     safe head/menu integration with backups, and cache-busting. User ID 1 only.
   </description>
 
@@ -25,16 +25,16 @@
   <folder>rebrand</folder>
   <install_file>install.php</install_file>
   <uninstall_file>uninstall.php</uninstall_file>
-  <admin_page>admin/settings.php</admin_page>
+  <admin_page>configure.php</admin_page>
   <changelog>CHANGELOG.md</changelog>
   <readme>README.md</readme>
 
   <!-- Dependencies -->
   <dependencies>
-    <dependency type="plugin" required="true">
+    <dependency type="plugin" required="false">
       <name>Form Builder</name>
       <project_url>https://github.com/mudmin/usplugins/tree/master/src/forms</project_url>
-      <reason>Provides CSRF token helpers used by ReBrand admin forms.</reason>
+      <reason>Recommended: provides familiar CSRF helpers. ReBrand also works with core Token.</reason>
     </dependency>
     <dependency type="php_extension" required="false">
       <name>gd</name>
@@ -50,7 +50,7 @@
   <admin_only>true</admin_only>
   <user_id_1_only>true</user_id_1_only>
 
-  <!-- Features toggles (defaults) -->
+  <!-- Feature toggles (informational) -->
   <features>
     <feature key="logo_manager" default="true" />
     <feature key="favicon_generator_offline" default="true" />

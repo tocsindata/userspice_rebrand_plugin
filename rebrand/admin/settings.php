@@ -111,6 +111,9 @@ $selectedSiteId = (isset($_GET['site_id']) && ctype_digit((string)$_GET['site_id
 $currentSite = $selectedSiteId ? $siteSvc->getSite($selectedSiteId) : null;
 
 ?>
+<link rel="stylesheet" href="<?= $usUrlRoot ?>usersc/plugins/rebrand/assets/admin.css">
+<script src="<?= $usUrlRoot ?>usersc/plugins/rebrand/assets/admin.js" defer></script>
+
 <div class="container-fluid">
   <div class="row align-items-center mb-3">
     <div class="col">
