@@ -186,11 +186,26 @@ try {
         rebrand_flash_error('Logo file too large (max 2MB).');
         break;
       }
-      $mime = rebrand_finfo_mime($tmp);
-      if (!in_array($mime, ['image/png','image/jpeg'])) {
-        rebrand_flash_error('Logo must be PNG or JPG.');
+      
+        $mime = rebrand_finfo_mime($tmp);
+
+        // Accept common PNG/JPEG aliases + extension fallback
+        $okMimes = ['image/png','image/x-png','image/jpeg','image/pjpeg','image/jpg'];
+        $ext = strtolower(pathinfo($_FILES['logo_file']['name'] ?? '', PATHINFO_EXTENSION));
+        $extOk = in_array($ext, ['png','jpg','jpeg'], true);
+
+        if (!($mime && in_array(strtolower($mime), $okMimes, true)) && !$extOk) {
+        rebrand_flash_error('Logo must be PNG or JPG. (Detected: ' . htmlspecialchars((string)$mime) . ')');
         break;
-      }
+        }
+
+        // Normalize destination by extension to keep alpha when PNG
+        $isPng = ($ext === 'png') || (strtolower($mime) === 'image/png') || (strtolower($mime) === 'image/x-png');
+        $destRel = !empty($_POST['is_dark'])
+        ? 'users/images/rebrand/logo-dark.' . ($isPng ? 'png' : 'jpg')
+        : 'users/images/rebrand/logo.' . ($isPng ? 'png' : 'jpg');
+        $destAbs = $usRoot . ltrim($destRel, '/');
+
 
       $isDark = !empty($_POST['is_dark']);
       $destRel = $isDark ? 'users/images/rebrand/logo-dark.png' : 'users/images/rebrand/logo.png';

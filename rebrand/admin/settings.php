@@ -70,7 +70,24 @@ if (!$settings) {
 }
 
 $assetVersion   = (int)$settings->asset_version;
-$logoPath       = $settings->logo_path ?: 'users/images/rebrand/logo.png';
+// OLD:
+$logoPath = $settings->logo_path ?: 'users/images/rebrand/logo.png';
+
+// NEW (fallback to the stock UserSpice logo when ours doesn't exist yet):
+$logoCandidates = [
+  (string)($settings->logo_path ?: ''),                 // plugin setting if set
+  'users/images/rebrand/logo.png',                       // plugin default location
+  'users/images/logo.png',                               // stock UserSpice logo (your current)
+];
+$logoPath = '';
+foreach ($logoCandidates as $cand) {
+  if (!$cand) continue;
+  $abs = $usRoot . ltrim($cand, '/');
+  if (file_exists($abs)) { $logoPath = $cand; break; }
+}
+// Final safeguard if none found:
+if ($logoPath === '') { $logoPath = 'users/images/logo.png'; }
+
 $logoDarkPath   = $settings->logo_dark_path ?: '';
 $faviconRootRel = $settings->favicon_root ?: 'users/images/rebrand/icons';
 $faviconHtml    = $settings->favicon_html ?: '';
