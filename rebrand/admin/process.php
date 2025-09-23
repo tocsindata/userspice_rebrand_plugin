@@ -62,7 +62,8 @@ $_SESSION['rebrand_flash'] = []; // simple flash mechanism
 // ---- helpers ---------------------------------------------------------------
 
 function rebrand_redirect_back($usUrlRoot) {
-  header('Location: ' . rtrim($usUrlRoot, '/') . '/usersc/plugins/rebrand/configure.php');
+  $dest = rtrim($usUrlRoot, '/') . '/users/admin.php?view=plugins_config&plugin=rebrand';
+  header('Location: ' . $dest);
   exit;
 }
 

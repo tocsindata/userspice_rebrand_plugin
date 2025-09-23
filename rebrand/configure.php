@@ -4,12 +4,7 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-function rebrand_redirect_back($usUrlRoot) {
-  header('Location: ' . rtrim($usUrlRoot, '/') . '/usersc/plugins/rebrand/configure.php');
-  exit;
-}
-
-// Robustly locate /users/init.php from anywhere under the plugin folder
+// Robust init
 $init = null;
 for ($i = 0; $i < 6; $i++) {
   $try = realpath(__DIR__ . str_repeat(DIRECTORY_SEPARATOR . '..', $i) . '/users/init.php');
@@ -17,15 +12,17 @@ for ($i = 0; $i < 6; $i++) {
 }
 if ($init) { require_once $init; } else { die('ReBrand: could not locate users/init.php'); }
 
-// Ensure DB handle even if $db isn't global in this scope
+// Ensure DB instance
 if (!isset($db) || !($db instanceof DB)) { $db = DB::getInstance(); }
 
-// Access control: only logged-in user id 1
+// Access control
 if (!isset($user) || !$user->isLoggedIn() || (int)$user->data()->id !== 1) {
-  // bounce to admin dashboard if someone wanders in
   Redirect::to($us_url_root.'users/admin.php');
   exit;
 }
+
+// Output only the plugin content (Plugin Manager wraps this with admin chrome)
+require __DIR__ . '/admin/settings.php';
 
 // Page title (optional)
 if (!isset($settings)) { $settings = $db->query("SELECT * FROM settings LIMIT 1")->first(); }
