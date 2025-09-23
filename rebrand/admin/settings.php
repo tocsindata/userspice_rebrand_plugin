@@ -23,7 +23,7 @@ function rebrand_url($rel, $usUrlRoot, $assetVersion = null) {
   if ($assetVersion !== null) {
     $url .= '?v=' . (int)$assetVersion;
   }
-  return $url;
+  return $url; 
 } 
 
 $init = null;
