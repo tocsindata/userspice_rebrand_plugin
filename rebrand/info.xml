@@ -8,7 +8,7 @@
     Manage site branding in UserSpice: logo preview &amp; updates, offline favicon/app icon generation,
     safe head/menu integration with backups, and cache-busting. User ID 1 only.
   </description>
-
+  <button>ReBrand</button>
   <!-- Author / project -->
   <author>Tocsin Data</author>
   <author_url>https://github.com/tocsindata</author_url>

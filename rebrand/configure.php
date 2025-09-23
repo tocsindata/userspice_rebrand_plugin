@@ -31,10 +31,6 @@ if (!isset($user) || !$user->isLoggedIn() || (int)$user->data()->id !== 1) {
 if (!isset($settings)) { $settings = $db->query("SELECT * FROM settings LIMIT 1")->first(); }
 $title = 'ReBrand Settings';
 
-// Standard admin header
-require_once $abs_us_root.$us_url_root.'users/includes/template/header.php';
-// Optional: left nav
-require_once $abs_us_root.$us_url_root.'users/includes/navigation.php';
 
 // Include our UI partial (no header/footer inside)
 require __DIR__ . '/admin/settings.php';
