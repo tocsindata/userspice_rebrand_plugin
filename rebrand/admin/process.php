@@ -186,7 +186,7 @@ try {
         rebrand_flash_error('Logo file too large (max 2MB).');
         break;
       }
-      
+
         $mime = rebrand_finfo_mime($tmp);
 
         // Accept common PNG/JPEG aliases + extension fallback
@@ -448,6 +448,7 @@ try {
       $siteId    = isset($_POST['site_id']) && ctype_digit((string)$_POST['site_id']) ? (int)$_POST['site_id'] : 0;
       $siteName  = (string)($_POST['site_name'] ?? '');
       $siteUrl   = isset($_POST['site_url']) ? (string)$_POST['site_url'] : null;
+      $copyright = isset($_POST['copyright']) ? (string)$_POST['copyright'] : null;
 
       if ($siteId <= 0) {
         rebrand_flash_error('Invalid settings row (site_id).');
@@ -455,8 +456,8 @@ try {
       }
 
       try {
-        $siteSvc->updateSite($siteId, $siteName, $siteUrl);
-        rebrand_flash_success("Updated Site Settings (id {$siteId}): site_name / site_url saved with backup.");
+        $siteSvc->updateSite($siteId, $siteName, $siteUrl, $copyright);
+        rebrand_flash_success("Updated Site Settings (id {$siteId}): site_name / site_url  / copyright saved with backup.");
       } catch (Exception $e) {
         rebrand_flash_error('Site Settings error: ' . htmlspecialchars($e->getMessage()));
       }

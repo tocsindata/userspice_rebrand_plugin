@@ -237,6 +237,12 @@ $currentSite = $selectedSiteId ? $siteSvc->getSite($selectedSiteId) : null;
               </div>
             </div>
 
+            <div class="col-md-12">
+            <label class="form-label">Copyright (footer text)</label>
+            <input type="text" class="form-control" name="copyright"
+                    value="<?= h($currentSite['copyright'] ?? '') ?>" maxlength="255" placeholder="© Your Company">
+            </div>
+
             <div class="mt-3 d-flex gap-2">
               <button class="btn btn-primary">Save Site Settings</button>
               <button formaction="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php"
@@ -293,7 +299,7 @@ $currentSite = $selectedSiteId ? $siteSvc->getSite($selectedSiteId) : null;
                 <input type="file" name="logo_file" class="form-control" accept=".png,.jpg,.jpeg" required>
               </div>
               <div class="mb-2 form-check">
-                <input class="form-check-input" type="checkbox" value="1" id="resize_logo" name="resize_logo">
+                <input class="form-check-input" type="checkbox" value="1" id="resize_logo" name="resize_logo" style="shadow: 0 0 3px rgba(0,0,0,0.5);">
                 <label class="form-check-label" for="resize_logo">Resize on upload (keep aspect)</label>
               </div>
               <div class="row">
@@ -309,7 +315,7 @@ $currentSite = $selectedSiteId ? $siteSvc->getSite($selectedSiteId) : null;
               <div class="mt-3 d-flex gap-2">
                 <button class="btn btn-primary">Save Logo</button>
                 <div class="form-check ms-2">
-                  <input class="form-check-input" type="checkbox" value="1" id="is_dark" name="is_dark">
+                  <input class="form-check-input" type="checkbox" value="1" id="is_dark" name="is_dark" style="shadow: 0 0 3px rgba(0,0,0,0.5);">
                   <label class="form-check-label" for="is_dark">This upload is the Dark Variant</label>
                 </div>
               </div>
@@ -375,7 +381,7 @@ $currentSite = $selectedSiteId ? $siteSvc->getSite($selectedSiteId) : null;
                 <input type="file" name="master_png" class="form-control" accept=".png" <?= ($gdAvailable || $imagickAvailable) ? '' : 'disabled' ?>>
               </div>
               <div class="mb-2 form-check">
-                <input class="form-check-input" type="checkbox" name="include_maskable" id="include_maskable" value="1">
+                <input class="form-check-input" type="checkbox" name="include_maskable" id="include_maskable" value="1" style="shadow: 0 0 3px rgba(0,0,0,0.5);">
                 <label class="form-check-label" for="include_maskable">Include maskable icon variants</label>
               </div>
               <div class="mb-2">
@@ -488,7 +494,7 @@ $currentSite = $selectedSiteId ? $siteSvc->getSite($selectedSiteId) : null;
               ?>
                 <div class="border rounded p-2 mb-2">
                   <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" id="on_<?= h($key) ?>" name="social[<?= h($key) ?>][enabled]" value="1" <?= !empty($cfg['enabled']) ? 'checked' : '' ?>>
+                    <input class="form-check-input" type="checkbox" id="on_<?= h($key) ?>" name="social[<?= h($key) ?>][enabled]" value="1" <?= !empty($cfg['enabled']) ? 'checked' : '' ?> style ="shadow: 0 0 3px rgba(0,0,0,0.5);">
                     <label class="form-check-label" for="on_<?= h($key) ?>"><?= h($label) ?></label>
                   </div>
                   <label class="form-label mt-1">URL</label>

@@ -102,6 +102,16 @@ class MenuPatcher
         }
     }
 
+    protected function enc(string $html): string {
+        return htmlspecialchars($html, ENT_QUOTES, 'UTF-8');
+    }
+
+    protected function encodedMarkersRegex(): string {
+        // Matches &lt;!-- ReBrand START --&gt; ... &lt;!-- ReBrand END --&gt;
+        return '/&lt;!--\s*ReBrand\s+START\s*--&gt;.*?&lt;!--\s*ReBrand\s+END\s*--&gt;/is';
+    }
+
+    
     /**
      * Produce a simple diff for the specified IDs (shows the *current* inner block).
      */
@@ -180,16 +190,19 @@ class MenuPatcher
      */
     protected function upsertBlock(string $current, string $block): string
     {
-        $pattern = $this->markersRegex();
-        $replacement = "<!-- ReBrand START -->\n{$block}\n<!-- ReBrand END -->";
+        // Always store ENCODED block in DB (brand_html is encoded)
+        $encodedBlock = $this->enc("<!-- ReBrand START -->\n{$block}\n<!-- ReBrand END -->");
 
-        if (preg_match($pattern, $current)) {
-            return (string)preg_replace($pattern, $replacement, $current);
+        if (preg_match($this->markersRegex(), $current)) {
+            // replace whatever variant (raw or encoded) with encoded
+            return (string)preg_replace($this->markersRegex(), $encodedBlock, $current);
         }
 
+        // Append encoded markers at end
         $sep = (substr($current, -1) === "\n") ? "" : "\n";
-        return $current . $sep . $replacement . "\n";
+        return $current . $sep . $encodedBlock . "\n";
     }
+
 
     /**
      * Build the injected HTML block for logo + social icons.
@@ -202,43 +215,41 @@ class MenuPatcher
         $ver = (int)($ctx['asset_ver'] ?? 1);
         $social = (array)($ctx['social_links'] ?? []);
 
-        // Sort socials by 'order'
-        uasort($social, function ($a, $b) {
-            return (int)($a['order'] ?? 0) <=> (int)($b['order'] ?? 0);
-        });
+        // URLs use {{root}} so they work with existing menu rendering
+        $logoUrl = '{{root}}' . $this->verUrl($logo, $ver);
+        $logoDarkUrl = $logoDark !== '' ? '{{root}}' . $this->verUrl(ltrim($logoDark, '/'), $ver) : '';
 
-        // Brand HTML often uses {{root}} in your data; we keep absolute-root-friendly URLs (leading /)
-        $logoUrl = '/' . $this->verUrl($logo, $ver);
-        $logoDarkUrl = $logoDark !== '' ? '/' . $this->verUrl($logoDark, $ver) : '';
+        // Sort socials
+        uasort($social, fn($a,$b) => (int)($a['order'] ?? 0) <=> (int)($b['order'] ?? 0));
 
         $lines = [];
         $lines[] = '<div class="rebrand-header-block" style="display:flex;align-items:center;gap:1rem;">';
         $lines[] = '  <div class="rebrand-logo">';
         if ($logoDarkUrl !== '') {
             $lines[] = '    <picture>';
-            $lines[] = '      <source media="(prefers-color-scheme: dark)" srcset="' . htmlspecialchars($logoDarkUrl, ENT_QUOTES, 'UTF-8') . '">';
-            $lines[] = '      <img src="' . htmlspecialchars($logoUrl, ENT_QUOTES, 'UTF-8') . '" alt="Logo" class="img-fluid" style="max-height:48px">';
+            $lines[] = '      <source media="(prefers-color-scheme: dark)" srcset="' . $logoDarkUrl . '">';
+            $lines[] = '      <img src="' . $logoUrl . '" alt="Logo" class="img-fluid" style="max-height:48px">';
             $lines[] = '    </picture>';
         } else {
-            $lines[] = '    <img src="' . htmlspecialchars($logoUrl, ENT_QUOTES, 'UTF-8') . '" alt="Logo" class="img-fluid" style="max-height:48px">';
+            $lines[] = '    <img src="' . $logoUrl . '" alt="Logo" class="img-fluid" style="max-height:48px">';
         }
         $lines[] = '  </div>';
-
-        // Social links
         $lines[] = '  <div class="rebrand-socials" style="display:flex; gap:.75rem; align-items:center;">';
         foreach ($social as $key => $cfg) {
             if (empty($cfg['enabled'])) continue;
             $url = trim((string)($cfg['url'] ?? ''));
             if ($url === '') continue;
             $label = $this->labelForPlatform($key);
-            $icon = $this->iconForPlatform($key); // minimal fallback; site may have fontawesome already
-            $lines[] = '    <a href="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener" aria-label="' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '">' . $icon . '</a>';
+            // Keep it simple; most sites already use FA in menus
+            $lines[] = '    <a href="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener" aria-label="' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '">' . $this->iconForPlatform($key) . '</a>';
         }
         $lines[] = '  </div>';
         $lines[] = '</div>';
 
+        // Return RAW HTML; upsertBlock() will encode with htmlspecialchars()
         return implode("\n", $lines);
     }
+
 
     protected function labelForPlatform(string $key): string
     {
@@ -276,7 +287,7 @@ class MenuPatcher
     protected function extractInner(string $content): string
     {
         if (preg_match($this->markersRegex(), $content, $m)) {
-            $block = $m[0];
+            $block = html_entity_decode($m[0], ENT_QUOTES, 'UTF-8');
             $inner = preg_replace('/^.*?START\s*-->\s*/is', '', $block);
             $inner = preg_replace('/\s*<!--\s*ReBrand\s+END\s*-->$/is', '', $inner);
             return ltrim((string)$inner);
@@ -284,10 +295,13 @@ class MenuPatcher
         return '';
     }
 
+
     protected function markersRegex(): string
     {
-        return '/<!--\s*ReBrand\s+START\s*-->.*?<!--\s*ReBrand\s+END\s*-->/is';
+        // raw OR encoded markers
+        return '/(?:<!--\s*ReBrand\s+START\s*-->.*?<!--\s*ReBrand\s+END\s*-->)|(?:&lt;!--\s*ReBrand\s+START\s*--&gt;.*?&lt;!--\s*ReBrand\s+END\s*--&gt;)/is';
     }
+
 
     protected function formatDiff(string $old, string $new): string
     {

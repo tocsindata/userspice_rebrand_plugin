@@ -38,19 +38,19 @@ class SiteSettings
      *
      * @return array<int, array{ id:int, site_name:string, site_url:string|null }>
      */
-    public function listSites(): array
-    {
-        $rows = $this->db->query("SELECT `id`, `site_name`, `site_url` FROM `{$this->settingsTable}` ORDER BY `id` ASC")->results();
-        $out = [];
-        foreach ($rows as $r) {
-            $out[] = [
-                'id' => (int)$r->id,
-                'site_name' => (string)$r->site_name,
-                'site_url' => isset($r->site_url) ? (string)$r->site_url : null,
-            ];
-        }
-        return $out;
+    public function listSites(): array {
+        $rows = $this->db->query("SELECT `id`, `site_name`, `site_url`, `copyright`
+                                FROM `{$this->settingsTable}` ORDER BY `id` ASC")->results();
+        ...
+        'copyright' => isset($r->copyright) ? (string)$r->copyright : '',
     }
+    public function getSite(int $id): ?array {
+        $row = $this->db->query("SELECT `id`, `site_name`, `site_url`, `copyright`
+                                FROM `{$this->settingsTable}` WHERE `id` = ? LIMIT 1", [$id])->first();
+        ...
+        'copyright' => isset($row->copyright) ? (string)$row->copyright : '',
+    }
+
 
     /**
      * Fetch a single row (id, site_name, site_url) by settings.id.
@@ -72,31 +72,35 @@ class SiteSettings
      *
      * @throws \Exception on validation errors or DB failure
      */
-    public function updateSite(int $id, string $siteName, ?string $siteUrl): void
+    public function updateSite(int $id, string $siteName, ?string $siteUrl, ?string $copyright): void
     {
-        // Validate
         $siteName = $this->sanitizeSiteName($siteName);
-        if ($siteName === '') {
-            throw new \Exception('Site name is required and must be ≤ 100 characters.');
-        }
+        if ($siteName === '') throw new \Exception('Site name is required and must be ≤ 100 characters.');
         $siteUrl = $this->sanitizeHttpUrl($siteUrl);
+        $copyright = $this->sanitizeCopyright($copyright);
 
-        // Read current values for backup
         $curr = $this->getSite($id);
-        if (!$curr) {
-            throw new \Exception("settings.id {$id} not found.");
-        }
+        if (!$curr) throw new \Exception("settings.id {$id} not found.");
 
-        // Backup
-        $this->backup($id, $curr['site_name'], $curr['site_url']);
+        $this->backup($id, $curr['site_name'], $curr['site_url'], $curr['copyright']);
 
-        // Update only the two fields
         $fields = [
             'site_name' => $siteName,
             'site_url'  => $siteUrl,
+            'copyright' => $copyright,
         ];
         $this->db->update($this->settingsTable, $id, $fields);
     }
+
+    protected function sanitizeCopyright(?string $c): ?string
+    {
+        $t = trim((string)$c);
+        if ($t === '') return null;
+        // keep <=255 chars
+        if (mb_strlen($t, 'UTF-8') > 255) $t = mb_substr($t, 0, 255, 'UTF-8');
+        return $t;
+    }
+
 
     /**
      * Restore the most recent backup for a given settings.id (site_name + site_url).
@@ -111,11 +115,15 @@ class SiteSettings
 
         if (!$row) return false;
 
-        $fields = [
-            'site_name' => (string)$row->site_name_backup,
-            'site_url'  => $row->site_url_backup !== null ? (string)$row->site_url_backup : null,
-        ];
-        $this->db->update($this->settingsTable, $id, $fields);
+    $fields = [
+    'site_name' => (string)$row->site_name_backup,
+    'site_url'  => $row->site_url_backup !== null ? (string)$row->site_url_backup : null,
+    ];
+    if (property_exists($row, 'copyright_backup')) {
+    $fields['copyright'] = $row->copyright_backup !== null ? (string)$row->copyright_backup : null;
+    }
+    $this->db->update($this->settingsTable, $id, $fields);
+
         return true;
     }
 
@@ -125,41 +133,39 @@ class SiteSettings
 
     protected function ensureBackupTable(): void
     {
-        // Try to create backup table if it doesn't exist.
-        // Column widths chosen to mirror your schema constraints.
+        $sql = "
+        CREATE TABLE IF NOT EXISTS `{$this->backupTable}` (
+            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `settings_id` INT NOT NULL,
+            `site_name_backup` VARCHAR(100) NOT NULL,
+            `site_url_backup` VARCHAR(255) NULL,
+            `copyright_backup` VARCHAR(255) NULL,
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            KEY `idx_settings_id` (`settings_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+        ";
+        $this->db->query($sql);
+
+        // If table exists from an older version, add column if missing
         try {
-            $sql = "
-                CREATE TABLE IF NOT EXISTS `{$this->backupTable}` (
-                  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                  `settings_id` INT NOT NULL,
-                  `site_name_backup` VARCHAR(100) NOT NULL,
-                  `site_url_backup` VARCHAR(255) NULL,
-                  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                  PRIMARY KEY (`id`),
-                  KEY `idx_settings_id` (`settings_id`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-            ";
-            $this->db->query($sql);
+            $this->db->query("ALTER TABLE `{$this->backupTable}` ADD COLUMN `copyright_backup` VARCHAR(255) NULL");
         } catch (\Exception $e) {
-            // If creation fails, we still allow operation but without backup — not recommended.
-            // Better to surface an error:
-            throw new \Exception('Failed to ensure backup table for site settings: ' . $e->getMessage());
+            // ignore if it already exists
         }
     }
 
-    protected function backup(int $settingsId, string $siteName, ?string $siteUrl): void
+
+    protected function backup(int $settingsId, string $siteName, ?string $siteUrl, ?string $copyright): void
     {
-        try {
-            $this->db->insert($this->backupTable, [
-                'settings_id'      => $settingsId,
-                'site_name_backup' => $siteName,
-                'site_url_backup'  => $siteUrl,
-            ]);
-        } catch (\Exception $e) {
-            // Refuse to proceed if we cannot back up
-            throw new \Exception('Failed to record site settings backup: ' . $e->getMessage());
-        }
+        $this->db->insert($this->backupTable, [
+            'settings_id'      => $settingsId,
+            'site_name_backup' => $siteName,
+            'site_url_backup'  => $siteUrl,
+            'copyright_backup' => $copyright,
+        ]);
     }
+
 
     /**
      * Accepts ASCII/UTF-8, trims, and enforces length ≤100 (per schema).
