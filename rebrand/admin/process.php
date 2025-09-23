@@ -406,6 +406,110 @@ try {
       break;
     }
 
+
+case 'menu_search_replace': {
+  if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
+
+  // Inputs
+  $ids = $_POST['menu_ids'] ?? [];
+  if (!is_array($ids) || empty($ids)) { rebrand_flash_error('Select at least one menu.'); break; }
+  $ids = array_values(array_unique(array_map('intval', $ids)));
+
+  $findRaw = trim((string)($_POST['find'] ?? ''));
+  $replRaw = trim((string)($_POST['replace'] ?? ''));
+  $dryRun  = !empty($_POST['dry_run']);
+  $appendV = !empty($_POST['append_version']);
+
+  if ($findRaw === '') { rebrand_flash_error('Find value is required.'); break; }
+  if ($replRaw === '') { rebrand_flash_error('Replace value is required.'); break; }
+
+  // Load current asset version if needed
+  $s = rebrand_load_settings($db, $tableSettings);
+  $ver = (int)$s->asset_version;
+
+  // Helper: ensure ?v= appended once
+  $ensureVer = function(string $url) use ($appendV, $ver): string {
+    if (!$appendV) return $url;
+    // if already has ?v=, leave it
+    if (preg_match('/[?&]v=\d+$/', $url)) return $url;
+    return $url . (str_contains($url, '?') ? '&' : '?') . 'v=' . $ver;
+  };
+
+  $findCandidates = [];
+  $replCandidates = [];
+
+  // We’ll match raw and encoded variants in brand_html
+  $findCandidates[] = $findRaw;
+  $findCandidates[] = htmlspecialchars($findRaw, ENT_QUOTES, 'UTF-8');
+
+  $replTarget = $ensureVer($replRaw);
+  $replCandidates[] = $replTarget;
+  $replCandidates[] = htmlspecialchars($replTarget, ENT_QUOTES, 'UTF-8');
+
+  $report = [];
+  $totalChanges = 0;
+
+  foreach ($ids as $mid) {
+    $row = $db->query("SELECT id, brand_html, menu_name FROM us_menus WHERE id = ? LIMIT 1", [$mid])->first();
+    if (!$row) { $report[] = "ID {$mid}: not found"; continue; }
+
+    $orig = (string)$row->brand_html;
+    $new  = $orig;
+    $countBefore = 0;
+    $countAfter  = 0;
+
+    // Try encoded first (most common), then raw
+    foreach ($findCandidates as $i => $needle) {
+      $replacement = $replCandidates[$i] ?? $replCandidates[0];
+      $countBefore += substr_count($new, $needle);
+      if ($countBefore > 0) {
+        $new = str_replace($needle, $replacement, $new, $replCount);
+        $countAfter += (int)$replCount;
+      }
+    }
+
+    if ($countAfter === 0) {
+      $report[] = "ID {$mid} (“" . ($row->menu_name ?? '') . "”): no matches";
+      continue;
+    }
+
+    if ($dryRun) {
+      $report[] = "ID {$mid}: would replace {$countAfter} occurrence(s).";
+      $totalChanges += $countAfter;
+      continue;
+    }
+
+    // Backup the original row
+    try {
+      $db->insert($tableMenuBackups, [
+        'menu_id'        => (int)$mid,
+        'menu_item_id'   => null,
+        'menu_name'      => (string)($row->menu_name ?? ''),
+        'content_backup' => $orig,
+        'notes'          => 'SearchReplace path update',
+      ]);
+    } catch (\Exception $e) {
+      rebrand_flash_error('Backup failed for menu id ' . (int)$mid . ': ' . htmlspecialchars($e->getMessage()));
+      break 2;
+    }
+
+    // Write new content
+    $db->query("UPDATE us_menus SET brand_html = ? WHERE id = ? LIMIT 1", [$new, $mid]);
+    $report[] = "ID {$mid}: replaced {$countAfter} occurrence(s).";
+    $totalChanges += $countAfter;
+  }
+
+  if (!$dryRun && $totalChanges > 0) {
+    // Bump asset version to be safe (in case you added ?v=)
+    rebrand_bump_version($db, $tableSettings);
+  }
+
+  $prefix = $dryRun ? "Dry-run result:\n" : "Search & replace complete:\n";
+  rebrand_flash_success($prefix . implode("\n", $report));
+  break;
+}
+
+
     case 'apply_menu_patch': {
       if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
       $s = rebrand_load_settings($db, $tableSettings);

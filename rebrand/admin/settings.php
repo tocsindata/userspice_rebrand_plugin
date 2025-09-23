@@ -511,6 +511,71 @@ $currentSite = $selectedSiteId ? $siteSvc->getSite($selectedSiteId) : null;
       </div>
     </div>
   </div>
+<?php
+// Fetch menus so we can pick specific IDs (put this near the top where other queries are done)
+$menusList = $db->query("SELECT id, menu_name FROM us_menus ORDER BY id ASC")->results();
+$defaultFindPath   = '{{root}}users/images/logo.png'; // legacy stock path
+$defaultReplaceRel = $logoPath ?: 'users/images/rebrand/logo.png'; // current plugin logo path
+$defaultReplaceUrl = '{{root}}' . ltrim($defaultReplaceRel, '/');
+?>
+
+<!-- Section: Logo Path Search & Replace -->
+<div class="card mb-4">
+  <div class="card-header"><strong>Logo Path Search &amp; Replace</strong> — edit selected menu(s) only</div>
+  <div class="card-body">
+    <p class="text-muted mb-3">
+      This updates the <code>brand_html</code> field of the selected rows in <code>us_menus</code>. A row-level backup is created before any write.
+      Works with the encoded HTML in that column automatically.
+    </p>
+
+    <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-2">
+      <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
+      <input type="hidden" name="action" value="menu_search_replace">
+
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Menus to edit (hold Ctrl/Cmd for multi)</label>
+          <select class="form-select" name="menu_ids[]" multiple size="6" required>
+            <?php foreach ($menusList as $m): ?>
+              <option value="<?= (int)$m->id ?>" <?= in_array((int)$m->id, [1,2], true) ? 'selected' : '' ?>>
+                ID <?= (int)$m->id ?> — <?= h($m->menu_name ?? '') ?>
+              </option>
+            <?php endforeach; ?>
+          </select>
+          <small class="text-muted d-block mt-1">Tip: default selects IDs 1 and 2 (Main + Dashboard).</small>
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Find (raw or with {{root}})</label>
+          <input type="text" class="form-control" name="find" required
+                 value="<?= h($defaultFindPath) ?>">
+          <small class="text-muted">We’ll match both the raw string and its HTML-encoded form in <code>brand_html</code>.</small>
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Replace with</label>
+          <input type="text" class="form-control" name="replace"
+                 value="<?= h($defaultReplaceUrl) ?>">
+          <small class="text-muted">Default uses your plugin logo with <code>{{root}}</code>. Version is auto-appended.</small>
+        </div>
+      </div>
+
+      <div class="form-check mt-3">
+        <input class="form-check-input" type="checkbox" id="sr_append_ver" name="append_version" value="1" checked>
+        <label class="form-check-label" for="sr_append_ver">Append cache-buster <code>?v=asset_version</code> to the replacement URL</label>
+      </div>
+
+      <div class="mt-3 d-flex gap-2">
+        <button class="btn btn-outline-secondary" name="dry_run" value="1">Dry-run (show counts only)</button>
+        <button class="btn btn-primary">Replace in Selected Menus</button>
+      </div>
+    </form>
+
+    <small class="text-muted">
+      This tool does a simple string replace. If you’d like the richer marker-based block, use “Apply / Update Menu Content” above.
+    </small>
+  </div>
+</div>
 
   <!-- Footer / Help -->
   <div class="text-muted mb-5">
