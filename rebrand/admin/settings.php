@@ -16,16 +16,15 @@
  * NOTE: This file is UI-only. All mutating actions are handled by admin/process.php.
  */
 
+// At the very top:
 $init = null;
 for ($i = 0; $i < 6; $i++) {
   $try = realpath(__DIR__ . str_repeat(DIRECTORY_SEPARATOR . '..', $i) . '/users/init.php');
   if ($try && file_exists($try)) { $init = $try; break; }
 }
-if ($init) {
-  require_once $init;
-} else {
-  die('ReBrand: could not locate users/init.php');
-}
+if ($init) { require_once $init; } else { die('ReBrand: could not locate users/init.php'); }
+if (!isset($db) || !($db instanceof DB)) { $db = DB::getInstance(); }
+
 
 // Ensure we have a DB instance even if $db isn't global in this scope
 if (!isset($db) || !($db instanceof DB)) {
