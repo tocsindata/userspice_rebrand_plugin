@@ -174,66 +174,105 @@ try {
     }
 
     case 'upload_logo': {
-      if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
+    if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
 
-      if (empty($_FILES['logo_file']['tmp_name'])) {
+    if (empty($_FILES['logo_file'])) {
         rebrand_flash_error('No logo file uploaded.');
         break;
-      }
-      $tmp  = $_FILES['logo_file']['tmp_name'];
-      $size = (int)($_FILES['logo_file']['size'] ?? 0);
-      if ($size <= 0 || $size > 2 * 1024 * 1024) { // 2MB
-        rebrand_flash_error('Logo file too large (max 2MB).');
+    }
+
+    // Handle PHP upload errors up front
+    $err = (int)($_FILES['logo_file']['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($err !== UPLOAD_ERR_OK) {
+        $map = [
+        UPLOAD_ERR_INI_SIZE   => 'The uploaded file exceeds upload_max_filesize.',
+        UPLOAD_ERR_FORM_SIZE  => 'The uploaded file exceeds MAX_FILE_SIZE.',
+        UPLOAD_ERR_PARTIAL    => 'The file was only partially uploaded.',
+        UPLOAD_ERR_NO_FILE    => 'No file was uploaded.',
+        UPLOAD_ERR_NO_TMP_DIR => 'Missing a temporary folder on server.',
+        UPLOAD_ERR_CANT_WRITE => 'Failed to write file to disk.',
+        UPLOAD_ERR_EXTENSION  => 'A PHP extension stopped the file upload.',
+        ];
+        rebrand_flash_error('Upload error: ' . ($map[$err] ?? ('code '.$err)));
         break;
-      }
+    }
 
-        $mime = rebrand_finfo_mime($tmp);
+    $tmp  = $_FILES['logo_file']['tmp_name'] ?? '';
+    $name = $_FILES['logo_file']['name'] ?? '';
+    $size = (int)($_FILES['logo_file']['size'] ?? 0);
 
-        // Accept common PNG/JPEG aliases + extension fallback
-        $okMimes = ['image/png','image/x-png','image/jpeg','image/pjpeg','image/jpg'];
-        $ext = strtolower(pathinfo($_FILES['logo_file']['name'] ?? '', PATHINFO_EXTENSION));
-        $extOk = in_array($ext, ['png','jpg','jpeg'], true);
+    if ($tmp === '' || !is_uploaded_file($tmp)) {
+        rebrand_flash_error('No temporary upload found (blocked by server?).');
+        break;
+    }
+    if ($size <= 0 || $size > 5 * 1024 * 1024) { // allow up to 5MB
+        rebrand_flash_error('Logo file too large (max 5MB).');
+        break;
+    }
 
-        if (!($mime && in_array(strtolower($mime), $okMimes, true)) && !$extOk) {
+    $mime = rebrand_finfo_mime($tmp);
+    $okMimes = ['image/png','image/x-png','image/jpeg','image/pjpeg','image/jpg'];
+    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+    $extOk = in_array($ext, ['png','jpg','jpeg'], true);
+    if (!($mime && in_array(strtolower($mime), $okMimes, true)) && !$extOk) {
         rebrand_flash_error('Logo must be PNG or JPG. (Detected: ' . htmlspecialchars((string)$mime) . ')');
         break;
-        }
-
-        // Normalize destination by extension to keep alpha when PNG
-        $isPng = ($ext === 'png') || (strtolower($mime) === 'image/png') || (strtolower($mime) === 'image/x-png');
-        $destRel = !empty($_POST['is_dark'])
-        ? 'users/images/rebrand/logo-dark.' . ($isPng ? 'png' : 'jpg')
-        : 'users/images/rebrand/logo.' . ($isPng ? 'png' : 'jpg');
-        $destAbs = $usRoot . ltrim($destRel, '/');
-
-
-      $isDark = !empty($_POST['is_dark']);
-      $destRel = $isDark ? 'users/images/rebrand/logo-dark.png' : 'users/images/rebrand/logo.png';
-      $destAbs = $usRoot . ltrim($destRel, '/');
-
-      // Optional resize
-      $doResize = !empty($_POST['resize_logo']);
-      $maxW = isset($_POST['logo_max_w']) ? (int)$_POST['logo_max_w'] : 0;
-      $maxH = isset($_POST['logo_max_h']) ? (int)$_POST['logo_max_h'] : 0;
-
-      if ($doResize && ($maxW > 0 || $maxH > 0)) {
-        // Use service to resize and write atomically
-        $service->saveResizedImage($tmp, $mime, $destAbs, $maxW, $maxH);
-      } else {
-        // Just copy/replace
-        $data = file_get_contents($tmp);
-        if ($data === false) throw new Exception('Failed to read uploaded file.');
-        rebrand_atomic_write($destAbs, $data);
-      }
-
-      // Update settings + bump version
-      $patch = $isDark ? ['logo_dark_path' => $destRel] : ['logo_path' => $destRel];
-      rebrand_update_settings($db, $tableSettings, $patch);
-      $newVer = rebrand_bump_version($db, $tableSettings);
-
-      rebrand_flash_success('Logo updated successfully. Cache-busting applied (v' . (int)$newVer . ').');
-      break;
     }
+    $isPng = ($ext === 'png') || (strtolower((string)$mime) === 'image/png') || (strtolower((string)$mime) === 'image/x-png');
+
+    $isDark = !empty($_POST['is_dark']);
+    $destRel = $isDark
+        ? 'users/images/rebrand/logo-dark.' . ($isPng ? 'png' : 'jpg')
+        : 'users/images/rebrand/logo.'      . ($isPng ? 'png' : 'jpg');
+    $destAbs = $usRoot . ltrim($destRel, '/');
+
+    // Ensure destination directory exists
+    $destDir = dirname($destAbs);
+    if (!is_dir($destDir)) {
+        if (!mkdir($destDir, 0755, true) && !is_dir($destDir)) {
+        rebrand_flash_error('Cannot create destination directory: ' . htmlspecialchars($destDir));
+        break;
+        }
+    }
+
+    // Optional resize
+    $doResize = !empty($_POST['resize_logo']);
+    $maxW = isset($_POST['logo_max_w']) ? (int)$_POST['logo_max_w'] : 0;
+    $maxH = isset($_POST['logo_max_h']) ? (int)$_POST['logo_max_h'] : 0;
+
+    try {
+        if ($doResize && ($maxW > 0 || $maxH > 0)) {
+        // Use service to resize; it reads from the tmp file and writes atomically
+        $service->saveResizedImage($tmp, $mime ?: ($isPng ? 'image/png' : 'image/jpeg'), $destAbs, $maxW, $maxH);
+        } else {
+        // Move the uploaded file safely, then atomically place it
+        $tmpDest = $destAbs . '.upload';
+        if (!move_uploaded_file($tmp, $tmpDest)) {
+            rebrand_flash_error('Failed to move uploaded file.');
+            break;
+        }
+        // Now replace atomically
+        if (!@rename($tmpDest, $destAbs)) {
+            @unlink($tmpDest);
+            rebrand_flash_error('Failed to finalize uploaded file.');
+            break;
+        }
+        @chmod($destAbs, 0644);
+        }
+    } catch (Exception $e) {
+        rebrand_flash_error('Logo processing error: ' . htmlspecialchars($e->getMessage()));
+        break;
+    }
+
+    // Update settings + bump version
+    $patch = $isDark ? ['logo_dark_path' => $destRel] : ['logo_path' => $destRel];
+    rebrand_update_settings($db, $tableSettings, $patch);
+    $newVer = rebrand_bump_version($db, $tableSettings);
+
+    rebrand_flash_success('Logo updated successfully. Cache-busting applied (v' . (int)$newVer . ').');
+    break;
+    }
+
 
     case 'upload_favicon_single': {
       if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
