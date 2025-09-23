@@ -16,7 +16,16 @@
  * NOTE: This file is UI-only. All mutating actions are handled by admin/process.php.
  */
 
-// At the very top:
+// Helpers to build URLs relative to $us_url_root
+function rebrand_url($rel, $usUrlRoot, $assetVersion = null) {
+  $rel = ltrim($rel, '/');
+  $url = rtrim($usUrlRoot, '/') . '/' . $rel;
+  if ($assetVersion !== null) {
+    $url .= '?v=' . (int)$assetVersion;
+  }
+  return $url;
+} 
+
 $init = null;
 for ($i = 0; $i < 6; $i++) {
   $try = realpath(__DIR__ . str_repeat(DIRECTORY_SEPARATOR . '..', $i) . '/users/init.php');
@@ -96,16 +105,6 @@ $socialLinks    = json_decode($settings->social_links ?: '{}', true) ?: [];
 
 $gdAvailable       = extension_loaded('gd');
 $imagickAvailable  = class_exists('Imagick');
-
-// Helpers to build URLs relative to $us_url_root
-function rebrand_url($rel, $usUrlRoot, $assetVersion = null) {
-  $rel = ltrim($rel, '/');
-  $url = rtrim($usUrlRoot, '/') . '/' . $rel;
-  if ($assetVersion !== null) {
-    $url .= '?v=' . (int)$assetVersion;
-  }
-  return $url;
-}
 
 // Compute preview URLs
 $logoUrl      = rebrand_url($logoPath, $usUrlRoot, $assetVersion);
