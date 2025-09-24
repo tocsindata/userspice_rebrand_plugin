@@ -8,7 +8,7 @@ use DB;
  *
  * NOTES:
  * - Filesystem paths are built from $abs_us_root.$us_url_root.'…'
- * - URL strings that land in PHP files must literally use <?=$us_url_root?>.
+ * - URL strings that land in PHP files must literally use $us_url_root   .
  * - All writes create a backup row in `us_rebrand_file_backups` first.
  * - Only user ID 1 may perform mutating operations.
  */
@@ -69,7 +69,7 @@ class HeadTagsPatcher
             @mkdir($dir, 0755, true);
         }
 
-        // Minimal, plugin-safe boilerplate. Keep URL references using <?=$us_url_root?>.
+        // Minimal, plugin-safe boilerplate. Keep URL references using .......
         $boiler = <<<'PHP'
 <?php if (!defined('INIT')) require_once __DIR__ . '/../../users/init.php'; ?>
 <?php // UserSpice custom head tags (managed by Rebrand plugin). ?>
@@ -126,12 +126,12 @@ PHP;
     }
 
     /**
-     * Convert {{root}} -> <?=$us_url_root?> and append ?v=<assetVer>
+     * Convert {{root}} -> $us_url_root and append ?v=<assetVer>
      * to common static assets we control (images, icons, css, js, webmanifest).
      */
     protected function normalizeSnippet(string $snippet, int $assetVer): string
     {
-        $phpRootLiteral = '<?=$us_url_root?>';
+        $phpRootLiteral = $us_url_root;
         $out = str_replace('{{root}}', $phpRootLiteral, $snippet);
 
         // Add ?v= cache buster to typical assets if not already present.
@@ -287,7 +287,7 @@ PHP;
             );
 
             // shortcut icon (ensure versioning)
-            $shortcut = (string)($fields['shortcut_icon'] ?? '<?=$us_url_root?>favicon.ico');
+            $shortcut = (string)($fields['shortcut_icon'] ?? $us_url_root.'favicon.ico');
             if (!preg_match('#(?:^|[?&])v=\d+$#', $shortcut)) {
                 $shortcut .= (strpos($shortcut, '?') !== false ? '&' : '?') . 'v=' . (int)$assetVer;
             }
@@ -309,7 +309,7 @@ PHP;
 
     /**
      * Apply a custom snippet between markers (backup first).
-     * {{root}} inside $snippet becomes <?=$us_url_root?> and assets get ?v=
+     * {{root}} inside $snippet becomes $us_url_root and assets get ?v=
      * @throws \RuntimeException on permission or IO error.
      */
     public function applySnippet(string $snippet, int $assetVer): void
