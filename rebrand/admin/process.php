@@ -274,33 +274,80 @@ try {
     }
 
 
-    case 'upload_favicon_single': {
-      if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
-      if (empty($_FILES['favicon_ico']['tmp_name'])) {
-        rebrand_flash_error('No favicon.ico uploaded.');
-        break;
-      }
-      $tmp  = $_FILES['favicon_ico']['tmp_name'];
-      $size = (int)($_FILES['favicon_ico']['size'] ?? 0);
-      if ($size <= 0 || $size > 512 * 1024) { // 512KB
-        rebrand_flash_error('favicon.ico too large (max 512KB).');
-        break;
-      }
-      $mime = rebrand_finfo_mime($tmp);
-      // Some servers report ICO as image/vnd.microsoft.icon or image/x-icon
-      if (!in_array($mime, ['image/x-icon','image/vnd.microsoft.icon','image/ico','application/octet-stream'])) {
-        rebrand_flash_error('Invalid .ico file.');
-        break;
-      }
-      $dest = $usRoot . 'favicon.ico';
-      $data = file_get_contents($tmp);
-      if ($data === false) throw new Exception('Failed to read uploaded file.');
-      rebrand_atomic_write($dest, $data);
+case 'upload_favicon_single': {
+  if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
 
-      rebrand_bump_version($db, $tableSettings);
-      rebrand_flash_success('favicon.ico replaced. Cache-busting applied.');
+  if (empty($_FILES['favicon_ico'])) {
+    rebrand_flash_error('No favicon.ico uploaded.');
+    break;
+  }
+
+  // Map PHP upload errors
+  $err = (int)($_FILES['favicon_ico']['error'] ?? UPLOAD_ERR_NO_FILE);
+  if ($err !== UPLOAD_ERR_OK) {
+    $map = [
+      UPLOAD_ERR_INI_SIZE   => 'The uploaded file exceeds upload_max_filesize.',
+      UPLOAD_ERR_FORM_SIZE  => 'The uploaded file exceeds MAX_FILE_SIZE.',
+      UPLOAD_ERR_PARTIAL    => 'The file was only partially uploaded.',
+      UPLOAD_ERR_NO_FILE    => 'No file was uploaded.',
+      UPLOAD_ERR_NO_TMP_DIR => 'Missing a temporary folder on server.',
+      UPLOAD_ERR_CANT_WRITE => 'Failed to write file to disk.',
+      UPLOAD_ERR_EXTENSION  => 'A PHP extension stopped the file upload.',
+    ];
+    rebrand_flash_error('Upload error: ' . ($map[$err] ?? ('code '.$err)));
+    break;
+  }
+
+  $tmp  = $_FILES['favicon_ico']['tmp_name'] ?? '';
+  $name = $_FILES['favicon_ico']['name'] ?? '';
+  $size = (int)($_FILES['favicon_ico']['size'] ?? 0);
+
+  if ($tmp === '' || !is_uploaded_file($tmp)) {
+    rebrand_flash_error('No temporary upload found (blocked by server?).');
+    break;
+  }
+  if ($size <= 0 || $size > 512 * 1024) { // <=512KB
+    rebrand_flash_error('favicon.ico too large (max 512KB).');
+    break;
+  }
+
+  // Light validation: ICO is commonly reported as image/x-icon or image/vnd.microsoft.icon
+  $mime = rebrand_finfo_mime($tmp);
+  $okMimes = ['image/x-icon','image/vnd.microsoft.icon','image/ico','application/octet-stream'];
+  $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+  if ($ext !== 'ico' && ($mime && !in_array(strtolower($mime), $okMimes, true))) {
+    rebrand_flash_error('Invalid .ico file. (Detected: ' . htmlspecialchars((string)$mime) . ')');
+    break;
+  }
+
+  // Destination: site root
+  $destAbs = $usRoot . 'favicon.ico';
+  $destDir = dirname($destAbs);
+  if (!is_dir($destDir)) {
+    if (!mkdir($destDir, 0755, true) && !is_dir($destDir)) {
+      rebrand_flash_error('Cannot create destination directory: ' . htmlspecialchars($destDir));
       break;
     }
+  }
+
+  // Move safely then atomically place
+  $tmpDest = $destAbs . '.upload';
+  if (!@move_uploaded_file($tmp, $tmpDest)) {
+    rebrand_flash_error('Failed to move uploaded file into place.');
+    break;
+  }
+  if (!@rename($tmpDest, $destAbs)) {
+    @unlink($tmpDest);
+    rebrand_flash_error('Failed to finalize uploaded favicon at site root.');
+    break;
+  }
+  @chmod($destAbs, 0644);
+
+  rebrand_bump_version($db, $tableSettings);
+  rebrand_flash_success('favicon.ico replaced at site root. Cache-busting applied.');
+  break;
+}
+
 
     case 'generate_icons_offline': {
       if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }

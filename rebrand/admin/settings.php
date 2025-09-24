@@ -45,10 +45,18 @@ if (!isset($db)) {
   die('ReBrand: UserSpice DB context not available.');
 }
 
+
+
 $userId = $user->data()->id ?? null;
 if ((int)$userId !== 1) {
   die('ReBrand: Only User ID 1 may access these settings.');
 }
+
+$faviconRootAbs = $usRoot . 'favicon.ico';
+$faviconExists  = file_exists($faviconRootAbs);
+$faviconSize    = $faviconExists ? filesize($faviconRootAbs) : 0;
+$faviconMtime   = $faviconExists ? date('Y-m-d H:i:s', filemtime($faviconRootAbs)) : null;
+
 
 $usRoot     = isset($abs_us_root) ? rtrim($abs_us_root, '/\\') . '/' : rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/') . '/';
 $usUrlRoot  = isset($us_url_root) ? $us_url_root : '/';
@@ -192,6 +200,20 @@ $currentSite = $selectedSiteId ? $siteSvc->getSite($selectedSiteId) : null;
       </div>
     </div>
   </div>
+  
+<div class="col-md-3">
+  <div class="border rounded p-3 h-100">
+    <div class="fw-bold">Root favicon.ico</div>
+    <?php if ($faviconExists): ?>
+      <div>Size: <?= (int)$faviconSize ?> bytes</div>
+      <div>Modified: <?= h($faviconMtime) ?></div>
+      <a href="<?= h(rtrim($usUrlRoot,'/')) ?>/favicon.ico?v=<?= (int)$assetVersion ?>" target="_blank">Open</a>
+    <?php else: ?>
+      <div class="text-danger">Not found at site root.</div>
+    <?php endif; ?>
+    <small class="text-muted">Path: <code><?= h($faviconRootAbs) ?></code></small>
+  </div>
+</div>
 
   <!-- Section: Site Settings (multi-site aware) -->
   <div class="card mb-4">
