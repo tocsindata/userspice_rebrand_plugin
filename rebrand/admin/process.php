@@ -387,7 +387,7 @@ case 'upload_favicon_single': {
 
     rebrand_flash_success("Head meta updated in usersc/includes/head_tags.php (backup created).");
     break;
-}
+    }
 
 
     case 'generate_icons_offline': {
