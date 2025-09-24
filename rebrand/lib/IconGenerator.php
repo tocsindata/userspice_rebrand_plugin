@@ -372,7 +372,7 @@ class IconGenerator
         }
         $this->atomicWrite($vf, (string)$next);
 
-        return (string)$next;
+        return (string)$next;  
     }
 
     /**
