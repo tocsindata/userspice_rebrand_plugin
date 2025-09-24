@@ -163,7 +163,7 @@ require_once __DIR__ . '/../lib/SiteSettings.php'; // NEW
 
 $service    = new \Rebrand\RebrandService($db, $tableSettings);
 $icons      = new \Rebrand\IconGenerator();
-$headPatch  = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $headTagsPath);
+$headPatch  = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $headTagsPath, $us_url_root); // normally HeadTagsPatcher($db, $tableFileBackups, $abs_us_root, $us_url_root); but for this one we are specifying the path directly
 $menuPatch  = new \Rebrand\MenuPatcher($db, $tableMenuBackups);
 $siteSvc    = new \Rebrand\SiteSettings($db);
 
