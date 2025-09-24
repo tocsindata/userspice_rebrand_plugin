@@ -33,7 +33,7 @@ class IconGenerator
      *
      * Options:
      *  - include_maskable (bool) : also write maskable-512.png
-     *  - theme_color (string)    : hex color for commented theme meta
+     *  - theme_color (string)    : hex color for commented theme meta    
      */
     public function generateFromMaster(string $masterPngTmp, array $opts = []): array
     {
