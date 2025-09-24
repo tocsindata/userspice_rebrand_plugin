@@ -6,15 +6,15 @@ class HeadTagsPatcher
     /** @var \DB */
     protected $db;
     protected string $fileBackupsTable;
-    protected string $usRoot;
-    protected string $usUrlRoot;
+    protected string $abs_us_root;
+    protected string $us_url_root;
 
-    public function __construct($db, string $fileBackupsTable, string $usRoot, string $usUrlRoot)
+    public function __construct($db, string $fileBackupsTable, string $abs_us_root, string $us_url_root)
     {
         $this->db = $db;
         $this->fileBackupsTable = $fileBackupsTable;
-        $this->usRoot = rtrim($usRoot, '/\\') . '/';
-        $this->usUrlRoot = $usUrlRoot;
+        $this->usRoot = rtrim($abs_us_root, '/\\') . '/';
+        $this->usUrlRoot = $us_url_root;
     }
 
     protected function headPath(): string

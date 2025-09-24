@@ -88,12 +88,12 @@ class RebrandService
     /**
      * Ensure core asset directories exist (users/images/rebrand, icons).
      *
-     * @param string $usRoot Absolute path to UserSpice root (with trailing slash)
+     * @param string $abs_us_root Absolute path to UserSpice root (with trailing slash)
      * @throws \Exception when directories cannot be created
      */
-    public function ensureAssetPaths(string $usRoot): void
+    public function ensureAssetPaths(string $abs_us_root): void
     {
-        $imgDir     = rtrim($usRoot, '/\\') . '/users/images';
+        $imgDir     = rtrim($abs_us_root, '/\\') . '/users/images';
         $rebrandDir = $imgDir . '/rebrand';
         $iconsDir   = $rebrandDir . '/icons';
 

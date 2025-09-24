@@ -19,6 +19,10 @@
  *  - MIME/size validations for uploads
  */
 
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
 $init = null;
 for ($i = 0; $i < 6; $i++) {
   $try = realpath(__DIR__ . str_repeat(DIRECTORY_SEPARATOR . '..', $i) . '/users/init.php');
@@ -44,25 +48,26 @@ if ((int)$userId !== 1) {
   die('ReBrand: Only User ID 1 may perform these actions.');
 }
 
-$usRoot     = isset($abs_us_root) ? rtrim($abs_us_root, '/\\') . '/' : rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/') . '/';
-$usUrlRoot  = isset($us_url_root) ? $us_url_root : '/';
-$usersc     = $usRoot . 'usersc/';
-$imagesDir  = $usRoot . 'users/images/';
+$abs_us_root     = isset($abs_us_root) ? rtrim($abs_us_root, '/\\') . '/' : rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/') . '/';
+$us_url_root  = isset($us_url_root) ? $us_url_root : '/';
+$usersc     = $abs_us_root . 'usersc/';
+$imagesDir  = $abs_us_root . 'users/images/';
 $rebrandDir = $imagesDir . 'rebrand/';
 $iconsDir   = $rebrandDir . 'icons/';
 $headTagsPath = $usersc . 'includes/head_tags.php';
 
-$tableSettings     = 'us_rebrand_settings';
-$tableMenuBackups  = 'us_rebrand_menu_backups';
-$tableFileBackups  = 'us_rebrand_file_backups';
+$tableSettings     = $tableSettings     ?? 'us_rebrand_settings';
+$tableMenuBackups  = $tableMenuBackups  ?? 'us_rebrand_menu_backups';
+$tableFileBackups  = $tableFileBackups  ?? 'us_rebrand_file_backups';
+$tableSiteBackups  = $tableSiteBackups  ?? 'us_rebrand_site_backups';
 
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 $_SESSION['rebrand_flash'] = []; // simple flash mechanism
 
 // ---- helpers ---------------------------------------------------------------
 
-function rebrand_redirect_back($usUrlRoot) {
-  $dest = rtrim($usUrlRoot, '/') . '/users/admin.php?view=plugins_config&plugin=rebrand';
+function rebrand_redirect_back($us_url_root) {
+  $dest = rtrim($us_url_root, '/') . '/users/admin.php?view=plugins_config&plugin=rebrand';
   header('Location: ' . $dest);
   exit;
 }
@@ -224,7 +229,7 @@ try {
     $destRel = $isDark
         ? 'users/images/rebrand/logo-dark.' . ($isPng ? 'png' : 'jpg')
         : 'users/images/rebrand/logo.'      . ($isPng ? 'png' : 'jpg');
-    $destAbs = $usRoot . ltrim($destRel, '/');
+    $destAbs = $abs_us_root . ltrim($destRel, '/');
 
     // Ensure destination directory exists
     $destDir = dirname($destAbs);
@@ -321,7 +326,7 @@ case 'upload_favicon_single': {
   }
 
   // Destination: site root
-  $destAbs = $usRoot . 'favicon.ico';
+  $destAbs = $abs_us_root . 'favicon.ico';
   $destDir = dirname($destAbs);
   if (!is_dir($destDir)) {
     if (!mkdir($destDir, 0755, true) && !is_dir($destDir)) {
@@ -356,38 +361,37 @@ case 'upload_favicon_single': {
     break;
     }
 
-    case 'save_head_meta': {
-    if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
+case 'save_head_meta': {
+  if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
 
-    require_once __DIR__ . '/../lib/HeadTagsPatcher.php';
-    $headPatch = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $usRoot, $usUrlRoot);
+  require_once __DIR__ . '/../lib/HeadTagsPatcher.php';
+  $headPatch = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $usRoot, $usUrlRoot);
 
-    $s = rebrand_load_settings($db, $tableSettings);
-    $ver = (int)$s->asset_version;
+  $s   = rebrand_load_settings($db, $tableSettings);
+  $ver = (int)$s->asset_version;
 
-    $fields = [
-        'charset'        => (string)($_POST['charset'] ?? ''),
-        'x_ua'           => (string)($_POST['x_ua'] ?? ''),
-        'description'    => (string)($_POST['description'] ?? ''),
-        'author'         => (string)($_POST['author'] ?? ''),
-        'og_url'         => (string)($_POST['og_url'] ?? ''),
-        'og_type'        => (string)($_POST['og_type'] ?? 'website'),
-        'og_title'       => (string)($_POST['og_title'] ?? ''),
-        'og_desc'        => (string)($_POST['description'] ?? ''), // reuse desc if separate not provided
-        'og_image'       => (string)($_POST['og_image'] ?? ''),
-        'shortcut_icon'  => (string)($_POST['shortcut_icon'] ?? ''),
-    ];
+  $fields = [
+    'charset'       => (string)($_POST['charset'] ?? ''),
+    'x_ua'          => (string)($_POST['x_ua'] ?? ''),
+    'description'   => (string)($_POST['description'] ?? ''),
+    'author'        => (string)($_POST['author'] ?? ''),
+    'og_url'        => (string)($_POST['og_url'] ?? ''),
+    'og_type'       => (string)($_POST['og_type'] ?? 'website'),
+    'og_title'      => (string)($_POST['og_title'] ?? ''),
+    'og_desc'       => (string)($_POST['og_desc'] ?? ($_POST['description'] ?? '')),
+    'og_image'      => (string)($_POST['og_image'] ?? ''),
+    'shortcut_icon' => (string)($_POST['shortcut_icon'] ?? ''),
+  ];
 
-    try {
-        $headPatch->applyMeta($fields, $ver);
-    } catch (\Exception $e) {
-        rebrand_flash_error('Head meta update failed: ' . htmlspecialchars($e->getMessage()));
-        break;
-    }
+  try {
+    $headPatch->applyMeta($fields, $ver);
+    rebrand_flash_success('Head meta updated in usersc/includes/head_tags.php (backup created).');
+  } catch (Throwable $e) {
+    rebrand_flash_error('Head meta update failed: ' . htmlspecialchars($e->getMessage()));
+  }
+  break;
+}
 
-    rebrand_flash_success("Head meta updated in usersc/includes/head_tags.php (backup created).");
-    break;
-    }
 
 
     case 'generate_icons_offline': {
@@ -608,7 +612,7 @@ case 'menu_search_replace': {
         break;
       }
 
-      $service->ensureAssetPaths($usRoot); // sanity check directories
+      $service->ensureAssetPaths($abs_us_root); // sanity check directories
       $menuPatch->apply($menuIds, [
         'logo_path'   => (string)$s->logo_path,
         'logo_dark'   => (string)($s->logo_dark_path ?? ''),
@@ -656,7 +660,7 @@ case 'menu_search_replace': {
           $parsed = parse_url($url);
           if (!$parsed || empty($parsed['scheme']) || !in_array(strtolower($parsed['scheme']), ['http','https'])) {
             rebrand_flash_error("Invalid URL for {$key}. Only http/https allowed.");
-            rebrand_redirect_back($usUrlRoot);
+            rebrand_redirect_back($us_url_root);
           }
         }
 
@@ -728,4 +732,4 @@ case 'menu_search_replace': {
 }
 
 // Always redirect back to the settings page
-rebrand_redirect_back($usUrlRoot);
+rebrand_redirect_back($us_url_root);
