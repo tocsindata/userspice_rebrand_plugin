@@ -365,7 +365,7 @@ case 'save_head_meta': {
   if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
 
   require_once __DIR__ . '/../lib/HeadTagsPatcher.php';
-  $headPatch = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $usRoot, $usUrlRoot);
+  $headPatch = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $abs_us_root, $us_url_root);
 
   $s   = rebrand_load_settings($db, $tableSettings);
   $ver = (int)$s->asset_version;
