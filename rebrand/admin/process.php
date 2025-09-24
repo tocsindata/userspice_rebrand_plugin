@@ -348,6 +348,14 @@ case 'upload_favicon_single': {
   break;
 }
 
+    case 'save_head_snippet': {
+    if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
+    $snippet = isset($_POST['head_snippet']) ? trim((string)$_POST['head_snippet']) : '';
+    rebrand_update_settings($db, $tableSettings, ['favicon_html' => $snippet !== '' ? $snippet : null]);
+    rebrand_flash_success($snippet === '' ? 'Head snippet cleared.' : 'Head snippet saved.');
+    break;
+    }
+
 
     case 'generate_icons_offline': {
       if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
