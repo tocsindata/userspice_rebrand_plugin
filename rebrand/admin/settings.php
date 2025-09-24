@@ -27,11 +27,11 @@ function rebrand_url($rel, $root, $ver=null){
   return $u;
 }
 
+
 require_once __DIR__ . '/../lib/HeadTagsPatcher.php';
-$headPatch = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $usRoot, $usUrlRoot);
+$headPatch = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $abs_us_root, $us_url_root); // ..
 $currentMeta = $headPatch->readCurrentMeta();
 $defaultOgTitle = $currentSite ? $currentSite['site_name'] : ($currentMeta['og_title'] ?? '');
-
 
 
 /* -------------------------------------------------------------
@@ -63,8 +63,8 @@ if (class_exists('Token') && method_exists('Token','generate')) {
 /* -------------------------------------------------------------
    Resolve important paths & default logo preview
 -------------------------------------------------------------- */
-$usRoot    = isset($abs_us_root) ? rtrim($abs_us_root,'/\\').'/' : rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/').'/';
-$usUrlRoot = isset($us_url_root) ? $us_url_root : '/';
+$abs_us_root    = isset($abs_us_root) ? rtrim($abs_us_root,'/\\').'/' : rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/').'/';
+$us_url_root = isset($us_url_root) ? $us_url_root : '/';
 
 $logoCandidates = [
   (string)($settingsRow->logo_path ?? ''),      // plugin-configured
@@ -74,18 +74,18 @@ $logoCandidates = [
 $logoPath = '';
 foreach ($logoCandidates as $cand) {
   if (!$cand) continue;
-  $abs = $usRoot . ltrim($cand, '/');
+  $abs = $abs_us_root . ltrim($cand, '/');
   if (file_exists($abs)) { $logoPath = $cand; break; }
 }
 if ($logoPath === '') $logoPath = 'users/images/logo.png';
-$logoUrl = rebrand_url($logoPath, $usUrlRoot, $assetVersion);
+$logoUrl = rebrand_url($logoPath, $us_url_root, $assetVersion);
 
 // Dark logo (optional)
 $logoDarkPath = (string)($settingsRow->logo_dark_path ?? '');
-$logoDarkUrl  = $logoDarkPath ? rebrand_url($logoDarkPath, $usUrlRoot, $assetVersion) : '';
+$logoDarkUrl  = $logoDarkPath ? rebrand_url($logoDarkPath, $us_url_root, $assetVersion) : '';
 
 // Favicon status
-$faviconRootAbs = $usRoot . 'favicon.ico';
+$faviconRootAbs = $abs_us_root . 'favicon.ico';
 $faviconExists  = file_exists($faviconRootAbs);
 $faviconSize    = $faviconExists ? (int)filesize($faviconRootAbs) : 0;
 $faviconMtime   = $faviconExists ? date('Y-m-d H:i:s', (int)filemtime($faviconRootAbs)) : null;
@@ -126,7 +126,7 @@ unset($_SESSION['rebrand_flash']);
   <!-- Title / Status -->
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h3 class="mb-0">ReBrand — Settings</h3>
-    <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" class="d-inline">
+    <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" class="d-inline">
       <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
       <input type="hidden" name="action" value="bump_version">
       <button class="btn btn-sm btn-outline-secondary" title="Increase asset_version to bust caches">Bump Version (now v<?= (int)$assetVersion ?>)</button>
@@ -147,7 +147,7 @@ unset($_SESSION['rebrand_flash']);
         <?php if ($faviconExists): ?>
           <div>Size: <?= (int)$faviconSize ?> bytes</div>
           <div>Modified: <?= h($faviconMtime) ?></div>
-          <a href="<?= h(rtrim($usUrlRoot,'/')) ?>/favicon.ico?v=<?= (int)$assetVersion ?>" target="_blank">Open</a>
+          <a href="<?= h(rtrim($us_url_root,'/')) ?>/favicon.ico?v=<?= (int)$assetVersion ?>" target="_blank">Open</a>
         <?php else: ?>
           <div class="text-danger">Not found at site root.</div>
         <?php endif; ?>
@@ -176,7 +176,7 @@ unset($_SESSION['rebrand_flash']);
   <div class="card mb-4">
     <div class="card-header"><strong>Site Settings</strong> — edit only name, URL, and copyright</div>
     <div class="card-body">
-      <form method="post" action="<?= $usUrlRoot ?>usersc/plugins/rebrand/configure.php" class="mb-3">
+      <form method="post" action="<?= $us_url_root ?>usersc/plugins/rebrand/configure.php" class="mb-3">
         <div class="row g-2 align-items-end">
           <div class="col-md-4">
             <label class="form-label">Select Settings Row (id)</label>
@@ -195,7 +195,7 @@ unset($_SESSION['rebrand_flash']);
       </form>
 
       <?php if ($currentSite): ?>
-      <form method="post" action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" class="mb-3">
+      <form method="post" action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" class="mb-3">
         <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
         <input type="hidden" name="action" value="site_settings_save">
         <input type="hidden" name="site_id" value="<?= (int)$currentSite['id'] ?>">
@@ -221,7 +221,7 @@ unset($_SESSION['rebrand_flash']);
 
         <div class="mt-3 d-flex gap-2">
           <button class="btn btn-primary">Save Site Settings</button>
-          <button formaction="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php"
+          <button formaction="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php"
                   name="action" value="site_settings_revert"
                   class="btn btn-outline-danger"
                   onclick="return confirm('Revert site_name/site_url/copyright to the last backup for this row?');">
@@ -242,7 +242,7 @@ unset($_SESSION['rebrand_flash']);
   <div class="card mb-4">
     <div class="card-header"><strong>Logo — Preview &amp; Upload</strong></div>
     <div class="card-body">
-      <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" enctype="multipart/form-data" class="row g-3">
+      <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" enctype="multipart/form-data" class="row g-3">
         <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
         <input type="hidden" name="action" value="upload_logo">
         <div class="col-md-6">
@@ -280,7 +280,7 @@ unset($_SESSION['rebrand_flash']);
         <div class="col-md-6">
           <div class="border rounded p-3 h-100">
             <div class="fw-bold mb-2">Upload favicon.ico (root)</div>
-            <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" enctype="multipart/form-data">
+            <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" enctype="multipart/form-data">
               <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
               <input type="hidden" name="action" value="upload_favicon_single">
               <input class="form-control mb-2" type="file" name="favicon_ico" accept=".ico,image/x-icon,image/vnd.microsoft.icon" required>
@@ -292,7 +292,7 @@ unset($_SESSION['rebrand_flash']);
         <div class="col-md-6">
           <div class="border rounded p-3 h-100">
             <div class="fw-bold mb-2">Generate Offline (from PNG)</div>
-            <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" enctype="multipart/form-data">
+            <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" enctype="multipart/form-data">
               <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
               <input type="hidden" name="action" value="generate_icons_offline">
               <div class="mb-2">
@@ -326,7 +326,7 @@ unset($_SESSION['rebrand_flash']);
 <div class="card mb-4">
   <div class="card-header"><strong>Head Meta</strong> — edits the actual <code>usersc/includes/head_tags.php</code></div>
   <div class="card-body">
-    <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" class="row g-3">
+    <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" class="row g-3">
       <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
       <input type="hidden" name="action" value="save_head_meta">
 
@@ -367,13 +367,13 @@ unset($_SESSION['rebrand_flash']);
 
       <div class="col-md-6">
         <label class="form-label">Shortcut Icon HREF</label>
-        <input class="form-control" name="shortcut_icon" value="<?= h($currentMeta['shortcut_icon'] ?: $usUrlRoot.'favicon.ico') ?>">
+        <input class="form-control" name="shortcut_icon" value="<?= h($currentMeta['shortcut_icon'] ?: $us_url_root.'favicon.ico') ?>">
         <small class="text-muted">We’ll append <code>?v=<?= (int)$assetVersion ?></code> automatically.</small>
       </div>
 
       <div class="col-12 d-flex gap-2 mt-2">
         <button class="btn btn-primary">Save Head Meta</button>
-        <button class="btn btn-outline-danger" formaction="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" name="action" value="revert_head_tags"
+        <button class="btn btn-outline-danger" formaction="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" name="action" value="revert_head_tags"
           onclick="return confirm('Revert head_tags.php from last backup?');">
           Revert from Backup
         </button>
@@ -409,13 +409,13 @@ HTML;
     <div class="col-md-8">
       <div class="border rounded p-3">
         <div class="fw-bold mb-2">Head Snippet (generated or custom)</div>
-        <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-2">
+        <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-2">
           <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
           <input type="hidden" name="action" value="save_head_snippet">
           <textarea class="form-control" name="head_snippet" rows="10"><?= h($headSnippet) ?></textarea>
           <div class="mt-2 d-flex gap-2">
             <button class="btn btn-primary">Save Head Snippet</button>
-            <a class="btn btn-outline-secondary" href="<?= $usUrlRoot ?>users/admin.php?view=plugins_config&plugin=rebrand">Reset (reload)</a>
+            <a class="btn btn-outline-secondary" href="<?= $us_url_root ?>users/admin.php?view=plugins_config&plugin=rebrand">Reset (reload)</a>
           </div>
         </form>
         <small class="text-muted d-block mt-2">
@@ -426,17 +426,17 @@ HTML;
     <div class="col-md-4">
       <div class="border rounded p-3 h-100">
         <div class="fw-bold mb-2">Apply to &lt;head&gt; (head_tags.php)</div>
-        <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-2">
+        <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-2">
           <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
           <input type="hidden" name="action" value="apply_head_tags">
           <button class="btn btn-success w-100">Apply / Update</button>
         </form>
-        <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-2">
+        <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-2">
           <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
           <input type="hidden" name="action" value="diff_head_tags">
           <button class="btn btn-outline-secondary w-100">Show Diff</button>
         </form>
-        <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post"
+        <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post"
               onsubmit="return confirm('Revert head_tags.php from last backup?');">
           <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
           <input type="hidden" name="action" value="revert_head_tags">
@@ -451,31 +451,31 @@ HTML;
   <div class="card mb-4">
     <div class="card-header"><strong>Menu Integration</strong> — inject block into <code>us_menus.brand_html</code></div>
     <div class="card-body">
-      <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-3">
+      <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-3">
         <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
         <input type="hidden" name="action" value="save_menu_targets">
         <label class="form-label">Target Menu Item IDs (JSON array)</label>
         <input type="text" class="form-control" name="menu_target_ids"
                value="<?= h((string)($settingsRow->menu_target_ids ?? '[]')) ?>">
         <div class="mt-2 d-flex gap-2">
-          <button class="btn btn-outline-secondary" formaction="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" name="action" value="discover_menu_candidates">Discover Candidates</button>
+          <button class="btn btn-outline-secondary" formaction="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" name="action" value="discover_menu_candidates">Discover Candidates</button>
           <button class="btn btn-primary">Save Target IDs</button>
         </div>
         <small class="text-muted d-block mt-2">Example: <code>[1,2]</code> (Main + Dashboard)</small>
       </form>
 
       <div class="d-flex gap-2">
-        <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post">
+        <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post">
           <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
           <input type="hidden" name="action" value="apply_menu_patch">
           <button class="btn btn-success">Apply / Update Menu Content</button>
         </form>
-        <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post">
+        <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post">
           <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
           <input type="hidden" name="action" value="diff_menu_patch">
           <button class="btn btn-outline-secondary">Show Diff</button>
         </form>
-        <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" onsubmit="return confirm('Revert last menu backups?');">
+        <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" onsubmit="return confirm('Revert last menu backups?');">
           <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
           <input type="hidden" name="action" value="revert_menu_patch">
           <button class="btn btn-outline-danger">Revert from Backup</button>
@@ -498,7 +498,7 @@ HTML;
         Updates <code>brand_html</code> of selected <code>us_menus</code> rows. We back up each row first.
         Matches both raw and HTML-encoded variants automatically.
       </p>
-      <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-2">
+      <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" class="mb-2">
         <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
         <input type="hidden" name="action" value="menu_search_replace">
         <div class="row g-3">
