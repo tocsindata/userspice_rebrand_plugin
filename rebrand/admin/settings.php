@@ -27,6 +27,13 @@ function rebrand_url($rel, $root, $ver=null){
   return $u;
 }
 
+require_once __DIR__ . '/../lib/HeadTagsPatcher.php';
+$headPatch = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $usRoot, $usUrlRoot);
+$currentMeta = $headPatch->readCurrentMeta();
+$defaultOgTitle = $currentSite ? $currentSite['site_name'] : ($currentMeta['og_title'] ?? '');
+
+
+
 /* -------------------------------------------------------------
    Load plugin settings (singleton row id=1) + CSRF + status
 -------------------------------------------------------------- */
@@ -315,6 +322,66 @@ unset($_SESSION['rebrand_flash']);
       </div>
     </div>
   </div>
+<!-- Head Meta (direct edits to usersc/includes/head_tags.php) -->
+<div class="card mb-4">
+  <div class="card-header"><strong>Head Meta</strong> — edits the actual <code>usersc/includes/head_tags.php</code></div>
+  <div class="card-body">
+    <form action="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" method="post" class="row g-3">
+      <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
+      <input type="hidden" name="action" value="save_head_meta">
+
+      <div class="col-md-3">
+        <label class="form-label">charset</label>
+        <input class="form-control" name="charset" value="<?= h($currentMeta['charset'] ?: 'utf-8') ?>">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">X-UA-Compatible</label>
+        <input class="form-control" name="x_ua" value="<?= h($currentMeta['x_ua'] ?: 'IE=edge') ?>">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Author</label>
+        <input class="form-control" name="author" value="<?= h($currentMeta['author']) ?>">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Description</label>
+        <input class="form-control" name="description" value="<?= h($currentMeta['description']) ?>">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">OG Image URL</label>
+        <input class="form-control" name="og_image" value="<?= h($currentMeta['og_image']) ?>" placeholder="<?=$us_url_root?>users/images/rebrand/icons/apple-touch-icon.png">
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">OG URL</label>
+        <input class="form-control" name="og_url" value="<?= h($currentMeta['og_url']) ?>" placeholder="<?=$us_url_root?>">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">OG Type</label>
+        <input class="form-control" name="og_type" value="<?= h($currentMeta['og_type'] ?: 'website') ?>">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">OG Title</label>
+        <input class="form-control" name="og_title" value="<?= h($defaultOgTitle ?: 'Userspice Site') ?>">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Shortcut Icon HREF</label>
+        <input class="form-control" name="shortcut_icon" value="<?= h($currentMeta['shortcut_icon'] ?: $usUrlRoot.'favicon.ico') ?>">
+        <small class="text-muted">We’ll append <code>?v=<?= (int)$assetVersion ?></code> automatically.</small>
+      </div>
+
+      <div class="col-12 d-flex gap-2 mt-2">
+        <button class="btn btn-primary">Save Head Meta</button>
+        <button class="btn btn-outline-danger" formaction="<?= $usUrlRoot ?>usersc/plugins/rebrand/admin/process.php" name="action" value="revert_head_tags"
+          onclick="return confirm('Revert head_tags.php from last backup?');">
+          Revert from Backup
+        </button>
+      </div>
+      <small class="text-muted">This writes directly into <code>usersc/includes/head_tags.php</code> and keeps a backup.</small>
+    </form>
+  </div>
+</div>
 
   <!-- Head Snippet -->
   <div class="row g-3 mb-4">

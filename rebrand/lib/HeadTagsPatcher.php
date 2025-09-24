@@ -1,258 +1,282 @@
 <?php
 namespace Rebrand;
 
-/**
- * HeadTagsPatcher
- *
- * Safely injects favicon/head markup into usersc/includes/head_tags.php
- * using START/END markers, with timestamped backups and a simple diff.
- *
- * Markers:
- *   <!-- ReBrand START -->
- *   ... (plugin-managed content) ...
- *   <!-- ReBrand END -->
- */
 class HeadTagsPatcher
 {
     /** @var \DB */
     protected $db;
+    protected string $fileBackupsTable;
+    protected string $usRoot;
+    protected string $usUrlRoot;
 
-    /** @var string */
-    protected $tableFileBackups;
-
-    /** @var string Absolute path to usersc/includes/head_tags.php */
-    protected $headPath;
-
-    public function __construct($db, string $tableFileBackups, string $headPath)
+    public function __construct($db, string $fileBackupsTable, string $usRoot, string $usUrlRoot)
     {
         $this->db = $db;
-        $this->tableFileBackups = $tableFileBackups;
-        $this->headPath = $headPath;
+        $this->fileBackupsTable = $fileBackupsTable;
+        $this->usRoot = rtrim($usRoot, '/\\') . '/';
+        $this->usUrlRoot = $usUrlRoot;
     }
 
-    /**
-     * Apply (insert/replace) the snippet between markers, after creating a backup.
-     * Adds cache-busting query param (?v=<asset_version>) to common favicon/image href/src URLs.
-     */
-    public function apply(string $snippet, int $assetVersion): void
+    protected function headPath(): string
     {
-        $current = $this->readFileOrScaffold();
-        $withMarkers = $this->ensureMarkers($current);
-
-        // Normalize/augment snippet: trim + ensure trailing newline
-        $snippet = rtrim($snippet) . "\n";
-
-        // Add cache-busting to typical favicon/icon URLs (non-destructive)
-        $snippet = $this->appendVersionToAssetUrls($snippet, $assetVersion);
-
-        // Prepare new content
-        $pattern = $this->markersRegex();
-        $replacement = "<!-- ReBrand START -->\n" . $snippet . "<!-- ReBrand END -->";
-        $next = preg_replace($pattern, $replacement, $withMarkers);
-
-        if ($next === null) {
-            throw new \Exception('Failed to prepare patched head_tags.php content.');
-        }
-
-        // Backup current file before writing
-        $this->backup($current, 'apply');
-
-        // Atomic write
-        $this->atomicWrite($this->headPath, $next);
+        return $this->usRoot . 'usersc/includes/head_tags.php';
     }
 
-    /**
-     * Show a lightweight diff between current marker content and what would be applied
-     * (with cache-busting).
-     */
-    public function diff(string $candidateSnippet = null, int $assetVersion = null): string
+    protected function ensureFileExists(): void
     {
-        $current = $this->readFileOrScaffold();
-        $currBlock = $this->extractBlock($current);
+        $path = $this->headPath();
+        if (file_exists($path)) return;
 
-        if ($candidateSnippet === null) {
-            // If no candidate provided, just show what's inside markers now
-            return $this->formatDiff($currBlock, $currBlock);
-        }
-
-        $cand = rtrim($candidateSnippet) . "\n";
-        if ($assetVersion !== null) {
-            $cand = $this->appendVersionToAssetUrls($cand, $assetVersion);
-        }
-
-        return $this->formatDiff($currBlock, $cand);
-    }
-
-    /**
-     * Revert to the most recent backup for this file.
-     */
-    public function revertLastBackup(): bool
-    {
-        try {
-            $row = $this->db->query(
-                "SELECT * FROM `{$this->tableFileBackups}` WHERE `path` = ? ORDER BY `id` DESC LIMIT 1",
-                [$this->headPath]
-            )->first();
-            if ($row && isset($row->content_backup)) {
-                $this->atomicWrite($this->headPath, $row->content_backup);
-                return true;
-            }
-        } catch (\Exception $e) {
-            // swallow
-        }
-        return false;
-    }
-
-    /* ---------------------------------------------------------------------
-     * Internals
-     * ------------------------------------------------------------------- */
-
-    protected function readFileOrScaffold(): string
-    {
-        if (!file_exists($this->headPath)) {
-            $scaffold = <<<PHP
-<?php
-/**
- * usersc/includes/head_tags.php
- * This file is included in the <head> of your pages.
- * The ReBrand plugin will insert content BETWEEN its markers below.
- */
-?>
-<!-- ReBrand START -->
-<!-- ReBrand END -->
-PHP;
-            $this->atomicWrite($this->headPath, $scaffold);
-            return $scaffold;
-        }
-        $c = @file_get_contents($this->headPath);
-        if ($c === false) {
-            throw new \Exception("Unable to read {$this->headPath}");
-        }
-        return $c;
-    }
-
-    protected function ensureMarkers(string $contents): string
-    {
-        if (preg_match($this->markersRegex(), $contents)) {
-            return $contents;
-        }
-        // Insert empty markers at end of file
-        $append = "\n<!-- ReBrand START -->\n<!-- ReBrand END -->\n";
-        return rtrim($contents) . "\n" . $append;
-    }
-
-    protected function markersRegex(): string
-    {
-        // Non-greedy match between START and END
-        return '/<!--\s*ReBrand\s+START\s*-->.*?<!--\s*ReBrand\s+END\s*-->/is';
-    }
-
-    protected function extractBlock(string $contents): string
-    {
-        if (preg_match($this->markersRegex(), $contents, $m)) {
-            $block = $m[0];
-            // Strip markers for diff payload
-            $inner = preg_replace('/^.*?START\s*-->\s*/is', '', $block);
-            $inner = preg_replace('/\s*<!--\s*ReBrand\s+END\s*-->$/is', '', $inner);
-            return ltrim((string)$inner);
-        }
-        return "";
-    }
-
-    protected function backup(string $content, string $notes = ''): void
-    {
-        try {
-            $this->db->insert($this->tableFileBackups, [
-                'path'           => $this->headPath,
-                'content_backup' => $content,
-                'notes'          => $notes,
-            ]);
-        } catch (\Exception $e) {
-            // If backup fails, we refuse to proceed to avoid destructive overwrite.
-            throw new \Exception('Failed to record backup for head_tags.php: ' . $e->getMessage());
-        }
-    }
-
-    /**
-     * Append ?v=<assetVersion> to common asset href/src occurrences if not already present.
-     */
-    protected function appendVersionToAssetUrls(string $html, int $assetVersion): string
-    {
-        $v = (int)$assetVersion;
-
-        // Only add to our known paths:
-        //  - /favicon.ico
-        //  - users/images/rebrand/icons/*.png
-        //  - users/images/rebrand/logo*.png (if referenced in head)
-        // Avoid double-appending when ?v= already present.
-        $patterns = [
-            // href="/favicon.ico"
-            '~(href\s*=\s*["\'])(/favicon\.ico)(["\'])~i',
-            // users/images/rebrand/icons/<file>.png
-            '~((?:href|src)\s*=\s*["\'])(users/images/rebrand/icons/[^"\']+?\.png)(["\'])~i',
-            // optional logo refs in head
-            '~((?:href|src)\s*=\s*["\'])(users/images/rebrand/logo[^"\']*?\.png)(["\'])~i',
-        ];
-
-        foreach ($patterns as $rx) {
-            $html = preg_replace_callback($rx, function ($m) use ($v) {
-                $prefix = $m[1];
-                $url = $m[2];
-                $quote = $m[3];
-                if (strpos($url, '?v=') !== false) {
-                    return $m[0]; // already versioned
-                }
-                $sep = (strpos($url, '?') === false) ? '?' : '&';
-                return $prefix . $url . $sep . 'v=' . $v . $quote;
-            }, $html);
-        }
-
-        return $html;
-    }
-
-    protected function atomicWrite(string $path, string $content): void
-    {
         $dir = dirname($path);
         if (!is_dir($dir)) {
-            if (!@mkdir($dir, 0755, true) && !is_dir($dir)) {
-                throw new \Exception("Failed to create directory: {$dir}");
-            }
+            @mkdir($dir, 0755, true);
         }
-        $tmp = @tempnam($dir, '.rebrand.tmp.');
-        if ($tmp === false) {
-            throw new \Exception("Failed to create temp file in {$dir}");
-        }
-        $bytes = @file_put_contents($tmp, $content);
-        if ($bytes === false) {
-            @unlink($tmp);
-            throw new \Exception("Failed to write temporary content.");
-        }
-        if (!@rename($tmp, $path)) {
-            @unlink($tmp);
-            throw new \Exception("Failed to move temp file into place: {$path}");
-        }
+        $boiler = <<<'PHP'
+<?php if (!defined('INIT')) require_once __DIR__ . '/../../users/init.php'; ?>
+<?php // UserSpice custom head tags ?>
+<?php // Keep this file lightweight; plugin-safe. ?>
+
+PHP;
+        file_put_contents($path, $boiler);
+        @chmod($path, 0644);
     }
 
-    /**
-     * Basic unified-like diff (line-by-line). Returns a readable text block.
-     */
-    protected function formatDiff(string $old, string $new): string
+    protected function backupFile(string $reason = 'edit'): void
     {
-        $a = explode("\n", (string)$old);
-        $b = explode("\n", (string)$new);
+        $path = $this->headPath();
+        $content = file_exists($path) ? file_get_contents($path) : '';
+        $this->db->insert($this->fileBackupsTable, [
+            'file_path'      => 'usersc/includes/head_tags.php',
+            'content_backup' => $content,
+            'notes'          => $reason,
+        ]);
+    }
 
-        $out = [];
-        $max = max(count($a), count($b));
-        for ($i = 0; $i < $max; $i++) {
-            $la = $a[$i] ?? '';
-            $lb = $b[$i] ?? '';
-            if ($la === $lb) {
-                $out[] = '  ' . $la;
-            } else {
-                if ($la !== '') $out[] = '- ' . $la;
-                if ($lb !== '') $out[] = '+ ' . $lb;
+    /** Convert {{root}} -> <?=$us_url_root?> and append ?v= */
+    protected function normalizeSnippet(string $snippet, int $assetVer): string
+    {
+        $phpRoot = '<?=$us_url_root?>';
+        $out = str_replace('{{root}}', $phpRoot, $snippet);
+
+        // Append ?v=assetVer to href/src URLs that look like our assets and don't already have v=
+        $out = preg_replace_callback(
+            '#(?P<attr>\b(?:href|src)\s*=\s*["\'])(?P<url>[^"\']+)(["\'])#i',
+            function ($m) use ($assetVer) {
+                $url = $m['url'];
+                if (preg_match('#[?&]v=\d+#', $url)) return $m[0];
+                if (preg_match('#\.(?:png|jpg|jpeg|gif|ico|svg|webmanifest)(?:$|\?)#i', $url)) {
+                    $url .= (str_contains($url, '?') ? '&' : '?') . 'v=' . $assetVer;
+                }
+                return $m['attr'] . $url . $m[3];
+            },
+            $out
+        );
+
+        return $out;
+    }
+
+    /** Read current meta/link values from the file */
+    public function readCurrentMeta(): array
+    {
+        $this->ensureFileExists();
+        $path = $this->headPath();
+        $txt = file_get_contents($path) ?: '';
+
+        $get = function(string $pattern, string $txt) {
+            if (preg_match($pattern, $txt, $m)) {
+                return html_entity_decode($m[1], ENT_QUOTES, 'UTF-8');
             }
+            return '';
+        };
+
+        return [
+            'charset'       => $get('#<meta\s+charset=["\']([^"\']+)#i', $txt),
+            'x_ua'         => $get('#<meta\s+http-equiv=["\']X-UA-Compatible["\']\s+content=["\']([^"\']+)#i', $txt),
+            'description'  => $get('#<meta\s+name=["\']description["\']\s+content=["\']([^"\']*)#i', $txt),
+            'author'       => $get('#<meta\s+name=["\']author["\']\s+content=["\']([^"\']*)#i', $txt),
+            'og_url'       => $get('#<meta\s+property=["\']og:url["\']\s+content=["\']([^"\']*)#i', $txt),
+            'og_type'      => $get('#<meta\s+property=["\']og:type["\']\s+content=["\']([^"\']*)#i', $txt),
+            'og_title'     => $get('#<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']*)#i', $txt),
+            'og_desc'      => $get('#<meta\s+property=["\']og:description["\']\s+content=["\']([^"\']*)#i', $txt),
+            'og_image'     => $get('#<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']*)#i', $txt),
+            'shortcut_icon'=> $get('#<link\s+rel=["\']shortcut icon["\']\s+href=["\']([^"\']+)#i', $txt),
+        ];
+    }
+
+    /** Apply meta/link replacements in-place (backup first). */
+    public function applyMeta(array $fields, int $assetVer): void
+    {
+        $this->ensureFileExists();
+        $path = $this->headPath();
+        $txt = file_get_contents($path) ?: '';
+
+        $this->backupFile('applyMeta');
+
+        $replaceContent = function(string $pattern, string $replacement, string $txt) {
+            if (preg_match($pattern, $txt)) {
+                return preg_replace($pattern, $replacement, $txt, 1);
+            }
+            // If missing, insert near top (after opening block or first PHP line)
+            $lines = preg_split("/(\r\n|\n|\r)/", $txt);
+            $insertAt = 0;
+            if (!empty($lines)) {
+                // after initial PHP open/guard lines
+                foreach ($lines as $i => $line) {
+                    if (strpos($line, '?>') !== false || stripos($line, '<meta') !== false) { $insertAt = $i + 1; break; }
+                }
+            }
+            $ins = $replacement . "\n";
+            array_splice($lines, $insertAt, 0, $ins);
+            return implode("\n", $lines);
+        };
+
+        // Build replacements (content/href values)
+        $charset = trim($fields['charset'] ?? '');
+        if ($charset !== '') {
+            $txt = $replaceContent(
+                '#<meta\s+charset=["\'][^"\']+["\']\s*/?>#i',
+                '<meta charset="' . htmlspecialchars($charset, ENT_QUOTES, 'UTF-8') . '">',
+                $txt
+            );
+        }
+
+        $xua = trim($fields['x_ua'] ?? '');
+        if ($xua !== '') {
+            $txt = $replaceContent(
+                '#<meta\s+http-equiv=["\']X-UA-Compatible["\']\s+content=["\'][^"\']*["\']\s*/?>#i',
+                '<meta http-equiv="X-UA-Compatible" content="' . htmlspecialchars($xua, ENT_QUOTES, 'UTF-8') . '">',
+                $txt
+            );
+        }
+
+        $desc = (string)($fields['description'] ?? '');
+        $txt = $replaceContent(
+            '#<meta\s+name=["\']description["\']\s+content=["\'][^"\']*["\']\s*/?>#i',
+            '<meta name="description" content="' . htmlspecialchars($desc, ENT_QUOTES, 'UTF-8') . '">',
+            $txt
+        );
+
+        $author = (string)($fields['author'] ?? '');
+        $txt = $replaceContent(
+            '#<meta\s+name=["\']author["\']\s+content=["\'][^"\']*["\']\s*/?>#i',
+            '<meta name="author" content="' . htmlspecialchars($author, ENT_QUOTES, 'UTF-8') . '">',
+            $txt
+        );
+
+        $og_url  = (string)($fields['og_url'] ?? '');
+        $txt = $replaceContent(
+            '#<meta\s+property=["\']og:url["\']\s+content=["\'][^"\']*["\']\s*/?>#i',
+            '<meta property="og:url" content="' . htmlspecialchars($og_url, ENT_QUOTES, 'UTF-8') . '">',
+            $txt
+        );
+
+        $og_type = (string)($fields['og_type'] ?? 'website');
+        $txt = $replaceContent(
+            '#<meta\s+property=["\']og:type["\']\s+content=["\'][^"\']*["\']\s*/?>#i',
+            '<meta property="og:type" content="' . htmlspecialchars($og_type, ENT_QUOTES, 'UTF-8') . '">',
+            $txt
+        );
+
+        $og_title = (string)($fields['og_title'] ?? '');
+        $txt = $replaceContent(
+            '#<meta\s+property=["\']og:title["\']\s+content=["\'][^"\']*["\']\s*/?>#i',
+            '<meta property="og:title" content="' . htmlspecialchars($og_title, ENT_QUOTES, 'UTF-8') . '">',
+            $txt
+        );
+
+        $og_desc = (string)($fields['og_desc'] ?? '');
+        $txt = $replaceContent(
+            '#<meta\s+property=["\']og:description["\']\s+content=["\'][^"\']*["\']\s*/?>#i',
+            '<meta property="og:description" content="' . htmlspecialchars($og_desc, ENT_QUOTES, 'UTF-8') . '">',
+            $txt
+        );
+
+        $og_image = (string)($fields['og_image'] ?? '');
+        $txt = $replaceContent(
+            '#<meta\s+property=["\']og:image["\']\s+content=["\'][^"\']*["\']\s*/?>#i',
+            '<meta property="og:image" content="' . htmlspecialchars($og_image, ENT_QUOTES, 'UTF-8') . '">',
+            $txt
+        );
+
+        // shortcut icon -> ensure ?v=assetVer appended
+        $shortcut = (string)($fields['shortcut_icon'] ?? '<?=$us_url_root?>favicon.ico');
+        if (!preg_match('#[?&]v=\d+$#', $shortcut)) {
+            $shortcut .= (str_contains($shortcut, '?') ? '&' : '?') . 'v=' . $assetVer;
+        }
+        $txt = $replaceContent(
+            '#<link\s+rel=["\']shortcut icon["\']\s+href=["\'][^"\']*["\']\s*/?>#i',
+            '<link rel="shortcut icon" href="' . $shortcut . '">',
+            $txt
+        );
+
+        // Write back
+        $this->atomicWrite($this->headPath(), $txt);
+    }
+
+    /** Apply our snippet between markers; converts {{root}} to <?=$us_url_root?> */
+    public function applySnippet(string $snippet, int $assetVer): void
+    {
+        $this->ensureFileExists();
+        $path = $this->headPath();
+        $txt = file_get_contents($path) ?: '';
+
+        $this->backupFile('applySnippet');
+
+        $start = '<!-- ReBrand START -->';
+        $end   = '<!-- ReBrand END -->';
+
+        $norm = $this->normalizeSnippet($snippet, $assetVer);
+        $block = $start . "\n" . $norm . "\n" . $end;
+
+        if (preg_match('#<!--\s*ReBrand\s+START\s*-->.*?<!--\s*ReBrand\s+END\s*-->#is', $txt)) {
+            $txt = preg_replace('#<!--\s*ReBrand\s+START\s*-->.*?<!--\s*ReBrand\s+END\s*-->#is', $block, $txt, 1);
+        } else {
+            // append near end
+            $txt .= "\n" . $block . "\n";
+        }
+
+        $this->atomicWrite($path, $txt);
+    }
+
+    public function diffAgainst(string $snippet): string
+    {
+        $this->ensureFileExists();
+        $txt = file_get_contents($this->headPath()) ?: '';
+        $have = $this->extractBlock($txt);
+        return $this->unifiedDiff($have, $snippet);
+    }
+
+    protected function extractBlock(string $txt): string
+    {
+        if (preg_match('#<!--\s*ReBrand\s+START\s*-->(.*?)<!--\s*ReBrand\s+END\s*-->#is', $txt, $m)) {
+            return trim($m[1]);
+        }
+        return '';
+    }
+
+    protected function unifiedDiff(string $old, string $new): string
+    {
+        $o = explode("\n", $old);
+        $n = explode("\n", $new);
+        $out = [];
+        $max = max(count($o), count($n));
+        for ($i=0;$i<$max;$i++) {
+            $ol = $o[$i] ?? '';
+            $nl = $n[$i] ?? '';
+            if ($ol === $nl) { $out[] = "  ".$ol; continue; }
+            if ($ol !== '' && $nl === '') { $out[] = "- ".$ol; continue; }
+            if ($ol === '' && $nl !== '') { $out[] = "+ ".$nl; continue; }
+            $out[] = "- ".$ol;
+            $out[] = "+ ".$nl;
         }
         return implode("\n", $out);
+    }
+
+    protected function atomicWrite(string $path, string $data): void
+    {
+        $tmp = $path . '.tmp';
+        file_put_contents($tmp, $data);
+        @chmod($tmp, 0644);
+        @rename($tmp, $path);
     }
 }

@@ -356,6 +356,39 @@ case 'upload_favicon_single': {
     break;
     }
 
+    case 'save_head_meta': {
+    if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
+
+    require_once __DIR__ . '/../lib/HeadTagsPatcher.php';
+    $headPatch = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $usRoot, $usUrlRoot);
+
+    $s = rebrand_load_settings($db, $tableSettings);
+    $ver = (int)$s->asset_version;
+
+    $fields = [
+        'charset'        => (string)($_POST['charset'] ?? ''),
+        'x_ua'           => (string)($_POST['x_ua'] ?? ''),
+        'description'    => (string)($_POST['description'] ?? ''),
+        'author'         => (string)($_POST['author'] ?? ''),
+        'og_url'         => (string)($_POST['og_url'] ?? ''),
+        'og_type'        => (string)($_POST['og_type'] ?? 'website'),
+        'og_title'       => (string)($_POST['og_title'] ?? ''),
+        'og_desc'        => (string)($_POST['description'] ?? ''), // reuse desc if separate not provided
+        'og_image'       => (string)($_POST['og_image'] ?? ''),
+        'shortcut_icon'  => (string)($_POST['shortcut_icon'] ?? ''),
+    ];
+
+    try {
+        $headPatch->applyMeta($fields, $ver);
+    } catch (\Exception $e) {
+        rebrand_flash_error('Head meta update failed: ' . htmlspecialchars($e->getMessage()));
+        break;
+    }
+
+    rebrand_flash_success("Head meta updated in usersc/includes/head_tags.php (backup created).");
+    break;
+}
+
 
     case 'generate_icons_offline': {
       if (!rebrand_csrf_ok()) { rebrand_flash_error('Invalid CSRF token.'); break; }
