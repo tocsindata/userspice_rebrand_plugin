@@ -20,7 +20,7 @@ namespace Rebrand;
  * 
  *   and appends ?v=<asset_version> to all controlled assets.
  * 
- * - Emits a head snippet that uses <?=$us_url_root?> for URLs.
+ * - Emits a head snippet that uses //////// for URLs.
  * 
  *
  * NOTE:
@@ -28,7 +28,7 @@ namespace Rebrand;
  * 
  *   catch and route back to:
  * 
- *     <?=$us_url_root?>users/admin.php?view=plugins_config&plugin=rebrand
+ *    users/admin.php?view=plugins_config&plugin=rebrand
  * 
  */
 class IconGenerator
@@ -39,14 +39,7 @@ class IconGenerator
     /** ICO sizes (subset of pngSizes) */
     protected array $icoSizes = [16, 32, 48, 64];
 
-    /**
-     * Public entry: generate icons into the canonical icons directory.
-     * Returns ['files' => [...], 'snippet' => '...'].
-     *
-     * Options:
-     *  - include_maskable (bool) : also write maskable-512.png
-     *  - theme_color (string)    : hex color for commented theme meta    
-     */
+   
     public function generateFromMaster(string $masterPngTmp, array $opts = []): array
     {
         $this->enforceOwner();
@@ -63,7 +56,7 @@ class IconGenerator
         }
         [$mw, $mh] = [$info[0], $info[1]];
         if ($mw < 64 || $mh < 64) {
-            throw new \Exception('Master PNG is too small. Provide at least 1024×1024 for best results.');
+            throw new \Exception('Master PNG is too small. Provide at least 64x64 for best results.');
         }
 
         $includeMaskable = !empty($opts['include_maskable']);
@@ -96,7 +89,7 @@ class IconGenerator
         // Bump persistent asset_version
         $assetVersion = $this->nextAssetVersion();
 
-        // Build head snippet with <?=$us_url_root?> and cache-busting
+        // Build head snippet with $us_url_root and cache-busting
         $snippet = $this->buildHeadSnippet($includeMaskable, $themeColor, $assetVersion);
 
         return [
@@ -104,12 +97,8 @@ class IconGenerator
             'snippet' => $snippet,
             'asset_version' => $assetVersion,
         ];
-    }
-
-    /**
-     * Revert a single file from the most recent backup entry.
-     * Returns true on success, false if no backup found.
-     */
+    }   
+    
     public function revertLatest(string $absolutePath): bool
     {
         $this->enforceOwner();
@@ -266,22 +255,22 @@ class IconGenerator
      * ------------------------------------------------------------------- */
 
     /**
-     * Build the HEAD snippet using <?=$us_url_root?> and ?v=<asset_version>.
+     * Build the HEAD snippet using xxxxxxxxxxxxxx and ?v=<asset_version>.
      * PWA lines are commented for future enablement.
      */
     protected function buildHeadSnippet(bool $includeMaskable, string $themeColor, string $assetVersion): string
     {
         $q = '?v=' . rawurlencode($assetVersion);
 
-        // Build relative path (under users/images/rebrand/icons/), but hrefs are prefixed by <?=$us_url_root?>.
+        // Build relative path (under users/images/rebrand/icons/), but hrefs are prefixed by .
         $href = function (string $filename) use ($q): string {
-            return '<?=$us_url_root?>users/images/rebrand/icons/' . ltrim($filename, '/') . $q;
+            return $us_url_root.'users/images/rebrand/icons/' . ltrim($filename, '/') . $q;
         };
 
         $lines = [];
 
         // Basic favicons
-        $lines[] = '<link rel="icon" type="image/x-icon" href="<?=$us_url_root?>users/images/rebrand/icons/favicon.ico' . $q . '">';
+        $lines[] = '<link rel="icon" type="image/x-icon" href='.$us_url_root.'users/images/rebrand/icons/favicon.ico' . $q . '">';
         $lines[] = '<link rel="icon" type="image/png" sizes="32x32" href="' . $href('favicon-32x32.png') . '">';
         $lines[] = '<link rel="icon" type="image/png" sizes="16x16" href="' . $href('favicon-16x16.png') . '">';
 
@@ -302,7 +291,7 @@ class IconGenerator
         // PWA-related (COMMENTED OUT intentionally)
         $lines[] = '<!--';
         $lines[] = '  PWA manifest & theme-color (intentionally commented by ReBrand; enable when ready)';
-        $lines[] = '  <link rel="manifest" href="<?=$us_url_root?>manifest.webmanifest' . $q . '">';
+        $lines[] = '  <link rel="manifest" href="'.$us_url_root.'manifest.webmanifest' . $q . '">';
         if ($themeColor !== '') {
             $lines[] = '  <meta name="theme-color" content="' . htmlspecialchars($themeColor, ENT_QUOTES, 'UTF-8') . '">';
         } else {
