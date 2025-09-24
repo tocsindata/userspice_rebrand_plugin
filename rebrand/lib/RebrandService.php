@@ -2,29 +2,71 @@
 namespace Rebrand;
 
 /**
- * RebrandService
+ * RebrandService (UserSpice v5)
  *
  * Central helpers for:
  *  - Settings I/O (read/update/bump version)
  *  - Filesystem prep (ensure asset paths exist & writable)
  *  - Image processing (safe resize with GD or Imagick)
+ *  - Backups (files table) + simple restore helpers
  *  - Basic validation utilities
  *
- * This class is framework-light and relies on the UserSpice $db query API,
- * injected via constructor.
+ * STRICT RULES FOLLOWED:
+ *  - DB access ONLY via \DB::getInstance() inside methods
+ *  - Uses global $abs_us_root / $us_url_root as-is
+ *  - Access guard for user ID 1
+ *  - File backups -> table us_rebrand_file_backups BEFORE any write
+ *  - Cache-busting via asset_version (stored in us_rebrand_settings)
  */
 class RebrandService
 {
-    /** @var \DB */
-    protected $db;
+    /** @var string Settings table name (id=1 row) */
+    protected $tableSettings = 'us_rebrand_settings';
 
-    /** @var string Table name for settings (id=1 row) */
-    protected $tableSettings;
+    /** @var string File backups table */
+    protected $tableFileBackups = 'us_rebrand_file_backups';
 
-    public function __construct($db, string $tableSettings = 'us_rebrand_settings')
+    /** @var string Menu backups table (exposed as helper; not used here) */
+    protected $tableMenuBackups = 'us_rebrand_menu_backups';
+
+    /** @var string Site backups table (exposed as helper; not used here) */
+    protected $tableSiteBackups = 'us_rebrand_site_backups';
+
+    public function __construct(string $tableSettings = 'us_rebrand_settings')
     {
-        $this->db = $db;
         $this->tableSettings = $tableSettings;
+    }
+
+    /* ---------------------------------------------------------------------
+     * Access control
+     * ------------------------------------------------------------------- */
+
+    /**
+     * Ensure only User ID 1 can proceed.
+     * Throws \Exception on failure.
+     */
+    public function requireId1(): void
+    {
+        global $user;
+        if (!isset($user) || !is_object($user) || !method_exists($user, 'data')) {
+            throw new \Exception('Auth error: User object unavailable.');
+        }
+        $u = $user->data();
+        if (!isset($u->id) || (int)$u->id !== 1) {
+            throw new \Exception('Permission denied: Only user ID 1 may perform this action.');
+        }
+    }
+
+    /* ---------------------------------------------------------------------
+     * DB helper
+     * ------------------------------------------------------------------- */
+
+    /**
+     * Obtain the DB instance (UserSpice standard).
+     */
+    protected function db(): \DB
+    {
+        return \DB::getInstance();
     }
 
     /* ---------------------------------------------------------------------
@@ -38,7 +80,7 @@ class RebrandService
      */
     public function getSettings(): object
     {
-        $row = $this->db->query("SELECT * FROM `{$this->tableSettings}` WHERE id = 1")->first();
+        $row = $this->db()->query("SELECT * FROM `{$this->tableSettings}` WHERE id = 1")->first();
         if ($row) {
             return $row;
         }
@@ -58,15 +100,16 @@ class RebrandService
 
     /**
      * Update settings (id=1). Creates the row if missing.
+     * Uses DB::getInstance() internally.
      */
     public function updateSettings(array $patch): void
     {
-        $exists = $this->db->query("SELECT id FROM `{$this->tableSettings}` WHERE id = 1")->first();
+        $exists = $this->db()->query("SELECT id FROM `{$this->tableSettings}` WHERE id = 1")->first();
         if ($exists) {
-            $this->db->update($this->tableSettings, 1, $patch);
+            $this->db()->update($this->tableSettings, 1, $patch);
         } else {
             $patch['id'] = 1;
-            $this->db->insert($this->tableSettings, $patch);
+            $this->db()->insert($this->tableSettings, $patch);
         }
     }
 
@@ -81,6 +124,17 @@ class RebrandService
         return $new;
     }
 
+    /**
+     * Return a URL path with ?v=<asset_version> appended.
+     * Pass a path relative to the web root (e.g., 'users/images/rebrand/logo.png').
+     */
+    public function withCacheBust(string $urlPath): string
+    {
+        $v = (int)$this->getSettings()->asset_version;
+        $sep = (strpos($urlPath, '?') === false) ? '?' : '&';
+        return $urlPath . $sep . 'v=' . $v;
+    }
+
     /* ---------------------------------------------------------------------
      * Filesystem helpers
      * ------------------------------------------------------------------- */
@@ -88,12 +142,16 @@ class RebrandService
     /**
      * Ensure core asset directories exist (users/images/rebrand, icons).
      *
-     * @param string $abs_us_root Absolute path to UserSpice root (with trailing slash)
+     * Uses global $abs_us_root with no assumptions.
+     *
      * @throws \Exception when directories cannot be created
      */
-    public function ensureAssetPaths(string $abs_us_root): void
+    public function ensureAssetPaths(): void
     {
-        $imgDir     = rtrim($abs_us_root, '/\\') . '/users/images';
+        global $abs_us_root;
+        $root = rtrim((string)$abs_us_root, '/\\');
+
+        $imgDir     = $root . '/users/images';
         $rebrandDir = $imgDir . '/rebrand';
         $iconsDir   = $rebrandDir . '/icons';
 
@@ -105,12 +163,12 @@ class RebrandService
         $htPath = $iconsDir . '/.htaccess';
         if (!file_exists($htPath)) {
             $this->atomicWrite($htPath, <<<HT
-# Auto-generated by ReBrand plugin
+# Auto-generated by Rebrand plugin
 <FilesMatch "\\.(php|php\\d*|phtml)$">
   Deny from all
 </FilesMatch>
 HT
-            );
+            , 'Create .htaccess in icons');
         }
     }
 
@@ -127,12 +185,22 @@ HT
     }
 
     /**
-     * Atomic write to a file (tmp + rename).
+     * Atomic write to a file (tmp + rename) with REQUIRED backup
+     * to table us_rebrand_file_backups BEFORE modifying the target.
+     *
+     * @param string $path    Absolute target path
+     * @param string $content New content to write
+     * @param string $notes   Optional human note for backup row
      */
-    public function atomicWrite(string $path, string $content): void
+    public function atomicWrite(string $path, string $content, string $notes = ''): void
     {
         $dir = dirname($path);
         $this->mkdirp($dir);
+
+        // Backup existing content (if any) BEFORE we write
+        $existing = file_exists($path) ? @file_get_contents($path) : '';
+        $this->backupFile($path, $existing, $notes);
+
         $tmp = @tempnam($dir, '.rebrand.tmp.');
         if ($tmp === false) {
             throw new \Exception("Failed to create temp file in {$dir}");
@@ -147,6 +215,41 @@ HT
             throw new \Exception("Failed to move temp file into place: {$path}");
         }
     }
+
+    /**
+     * Insert a backup row into us_rebrand_file_backups.
+     * NOTE: Schema per spec (file_path, content_backup, notes).
+     */
+    public function backupFile(string $absPath, string $contentBackup, string $notes = ''): void
+    {
+        $stamp = date('Y-m-d H:i:s');
+        $safeNotes = trim($notes) === '' ? "Auto-backup {$stamp}" : "{$notes} ({$stamp})";
+
+        $this->db()->insert($this->tableFileBackups, [
+            'file_path'      => $absPath,
+            'content_backup' => $contentBackup,
+            'notes'          => $safeNotes,
+        ]);
+    }
+
+    /**
+     * Restore the most recent backup row for a given absolute file path.
+     * Returns true if a backup was found and restored; false if none found.
+     */
+    public function restoreLatestFileBackup(string $absPath): bool
+    {
+        $row = $this->db()
+            ->query("SELECT * FROM `{$this->tableFileBackups}` WHERE file_path = ? ORDER BY id DESC LIMIT 1", [$absPath])
+            ->first();
+
+        if (!$row || !isset($row->content_backup)) {
+            return false;
+        }
+
+        // Write the backup back to disk (also makes a new backup of current)
+        $this->atomicWrite($absPath, (string)$row->content_backup, 'Restore latest file backup');
+        return true;
+        }
 
     /* ---------------------------------------------------------------------
      * Image processing
@@ -164,13 +267,13 @@ HT
      */
     public function saveResizedImage(string $srcTmp, string $mime, string $destAbs, int $maxW = 0, int $maxH = 0): void
     {
-        // No resize requested
+        // No resize requested — plain copy with backup via atomicWrite
         if ($maxW <= 0 && $maxH <= 0) {
             $data = @file_get_contents($srcTmp);
             if ($data === false) {
                 throw new \Exception('Failed to read uploaded file.');
             }
-            $this->atomicWrite($destAbs, $data);
+            $this->atomicWrite($destAbs, $data, 'Copy uploaded image');
             return;
         }
 
@@ -189,7 +292,7 @@ HT
         if ($data === false) {
             throw new \Exception('Failed to read uploaded file (no imaging libs available).');
         }
-        $this->atomicWrite($destAbs, $data);
+        $this->atomicWrite($destAbs, $data, 'Copy uploaded image (no imaging libs)');
     }
 
     /**
@@ -209,6 +312,7 @@ HT
         $w = (int)($geo['width'] ?? 0);
         $h = (int)($geo['height'] ?? 0);
         if ($w <= 0 || $h <= 0) {
+            $img->clear(); $img->destroy();
             throw new \Exception('Invalid image dimensions.');
         }
 
@@ -228,9 +332,10 @@ HT
             $img->setBackgroundColor('white');
         }
 
-        $this->atomicWrite($destAbs, $img->getImagesBlob());
-        $img->clear();
-        $img->destroy();
+        $blob = $img->getImagesBlob();
+        $img->clear(); $img->destroy();
+
+        $this->atomicWrite($destAbs, $blob, 'Resize image (Imagick)');
     }
 
     /**
@@ -266,7 +371,7 @@ HT
             if ($data === false) {
                 throw new \Exception('Failed to read uploaded file.');
             }
-            $this->atomicWrite($destAbs, $data);
+            $this->atomicWrite($destAbs, $data, 'Copy uploaded image (no resize)');
             return;
         }
 
@@ -286,7 +391,7 @@ HT
         imagecopyresampled($dst, $src, 0, 0, 0, 0, $targetW, $targetH, $w, $h);
         imagedestroy($src);
 
-        // Encode to dest based on extension
+        // Encode based on extension
         $ext = strtolower(pathinfo($destAbs, PATHINFO_EXTENSION));
         ob_start();
         $ok = false;
@@ -302,7 +407,7 @@ HT
             throw new \Exception('Failed to encode resized image.');
         }
 
-        $this->atomicWrite($destAbs, $blob);
+        $this->atomicWrite($destAbs, $blob, 'Resize image (GD)');
     }
 
     /**
@@ -361,5 +466,31 @@ HT
         $m = @finfo_file($f, $file);
         @finfo_close($f);
         return $m ?: null;
+    }
+
+    /* ---------------------------------------------------------------------
+     * URLs / Plugin Manager helpers
+     * ------------------------------------------------------------------- */
+
+    /**
+     * Return the Plugin Manager URL for this plugin.
+     * (Use for clean redirects after handling.)
+     */
+    public function pluginManagerUrl(): string
+    {
+        global $us_url_root;
+        return $us_url_root . 'users/admin.php?view=plugins_config&plugin=rebrand';
+    }
+
+    /**
+     * Convenience: build an absolute filesystem path from a web-root relative path.
+     * e.g., 'users/images/rebrand/logo.png' -> $abs_us_root.'users/images/rebrand/logo.png'
+     */
+    public function absPathFromWebPath(string $webPath): string
+    {
+        global $abs_us_root;
+        $root = rtrim((string)$abs_us_root, '/\\');
+        $rel  = ltrim($webPath, '/\\');
+        return $root . '/' . $rel;
     }
 }

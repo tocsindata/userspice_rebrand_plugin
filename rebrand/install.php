@@ -1,43 +1,76 @@
 <?php
 /**
- * UserSpice ReBrand Plugin — Installer (tidy)
+ * UserSpice ReBrand Plugin — Installer
  *
- * Creates/ensures:
- *   - us_rebrand_settings (singleton row id=1)
- *   - us_rebrand_menu_backups
- *   - us_rebrand_file_backups
- *   - us_rebrand_site_backups   <-- NEW (backs up settings.site_name & site_url)
+ * Responsibilities
+ *   - Create (if missing):
+ *       us_rebrand_settings (singleton row id=1 with asset_version, etc.)
+ *       us_rebrand_menu_backups
+ *       us_rebrand_file_backups
+ *       us_rebrand_site_backups
+ *   - Seed us_rebrand_settings row id=1 if absent (no-op if present)
  *
- * Notes
- * - Safe to re-run; DDL uses IF NOT EXISTS, and settings row is upserted.
- * - Restricts execution to User ID 1.
+ * Rules enforced:
+ *   - Uses UserSpice globals ($abs_us_root, $us_url_root)
+ *   - DB access ONLY via DB::getInstance() (no $db param)
+ *   - Only user ID 1 may run
+ *   - No header/footer includes (Plugin Manager supplies chrome)
+ *   - Clean error handling (no fatal white screens)
  */
 
-if (!defined('ABS_US_ROOT') && !defined('US_URL_ROOT') && !isset($abs_us_root)) {
-  $root = realpath(__DIR__ . '/../../..'); // usersc/plugins/rebrand -> usersc
-  $init = $root . '/users/init.php';
-  if (file_exists($init)) {
-    require_once $init;
+////////////////////////////////////////////////////////////////
+// Bootstrap UserSpice (require init.php) using real paths
+////////////////////////////////////////////////////////////////
+if (!isset($abs_us_root) || !isset($us_url_root)) {
+  $us_root_guess = realpath(__DIR__ . '/../../..'); // usersc/plugins/rebrand -> usersc
+  $init = $us_root_guess . '/users/init.php';
+  if (!file_exists($init)) {
+    // Minimal, safe output (no white screen)
+    echo '<div class="alert alert-danger">ReBrand installer error: users/init.php not found.</div>';
+    return;
   }
+  require_once $init;
 }
 
-if (!isset($db)) {
-  die('ReBrand installer: UserSpice DB context not available.');
+////////////////////////////////////////////////////////////////
+// Guard: Only User ID 1
+////////////////////////////////////////////////////////////////
+global $user, $abs_us_root, $us_url_root;
+if (!isset($user) || !$user->isLoggedIn()) {
+  echo '<div class="alert alert-danger">ReBrand installer: You must be logged in as User ID 1.</div>';
+  return;
+}
+$userId = (int)($user->data()->id ?? 0);
+if ($userId !== 1) {
+  echo '<div class="alert alert-danger">ReBrand installer: Only User ID 1 may run the installer.</div>';
+  return;
 }
 
-$userId = $user->data()->id ?? null;
-if ((int)$userId !== 1) {
-  die('ReBrand installer: Only User ID 1 may run the installer.');
+////////////////////////////////////////////////////////////////
+// DB handle (UserSpice way)
+////////////////////////////////////////////////////////////////
+try {
+  $db = DB::getInstance();
+} catch (Exception $e) {
+  echo '<div class="alert alert-danger">ReBrand installer DB error: '
+     . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . '</div>';
+  return;
 }
 
-$tableSettings        = 'us_rebrand_settings';
-$tableMenuBackups     = 'us_rebrand_menu_backups';
-$tableFileBackups     = 'us_rebrand_file_backups';
-$tableSiteBackups     = 'us_rebrand_site_backups';
+////////////////////////////////////////////////////////////////
+// Table names
+////////////////////////////////////////////////////////////////
+$tableSettings    = 'us_rebrand_settings';
+$tableMenuBackups = 'us_rebrand_menu_backups';
+$tableFileBackups = 'us_rebrand_file_backups';
+$tableSiteBackups = 'us_rebrand_site_backups';
 
 $messages = [];
 $errors   = [];
 
+////////////////////////////////////////////////////////////////
+// DDL + seed (safe to re-run)
+////////////////////////////////////////////////////////////////
 try {
   // 1) Settings table (singleton)
   $db->query("
@@ -58,8 +91,8 @@ try {
   ");
   $messages[] = "Ensured table {$tableSettings}";
 
-  // Seed/Upsert singleton row id=1
-  $exists = $db->query("SELECT id FROM `{$tableSettings}` WHERE id = 1 LIMIT 1")->first();
+  // Upsert/seed singleton row id=1
+  $exists = $db->query("SELECT `id` FROM `{$tableSettings}` WHERE `id` = 1 LIMIT 1")->first();
   if (!$exists) {
     $db->insert($tableSettings, [
       'id'                      => 1,
@@ -110,7 +143,7 @@ try {
   ");
   $messages[] = "Ensured table {$tableFileBackups}";
 
-  // 4) Site settings backups (NEW)
+  // 4) Site settings backups
   $db->query("
     CREATE TABLE IF NOT EXISTS `{$tableSiteBackups}` (
       `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -125,24 +158,33 @@ try {
   $messages[] = "Ensured table {$tableSiteBackups}";
 
 } catch (Exception $e) {
-  $errors[] = 'Install error: ' . htmlspecialchars($e->getMessage());
+  $errors[] = 'Install error: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8');
 }
 
-// Minimal output for plugin manager context
+////////////////////////////////////////////////////////////////
+// Minimal UI for Plugin Manager context (no headers/footers)
+////////////////////////////////////////////////////////////////
 ?>
 <div class="card">
   <div class="card-header"><strong>ReBrand — Install</strong></div>
   <div class="card-body">
-    <?php if (!empty($messages)): ?>
+    <?php if (!empty($messages)) : ?>
       <div class="alert alert-success" style="white-space: pre-wrap;">
         <?= htmlspecialchars(implode("\n", $messages), ENT_QUOTES, 'UTF-8') ?>
       </div>
     <?php endif; ?>
-    <?php if (!empty($errors)): ?>
+
+    <?php if (!empty($errors)) : ?>
       <div class="alert alert-danger" style="white-space: pre-wrap;">
         <?= htmlspecialchars(implode("\n", $errors), ENT_QUOTES, 'UTF-8') ?>
       </div>
     <?php endif; ?>
-    <p>Installer finished. You can proceed to the <a href="<?= isset($us_url_root) ? $us_url_root : '/' ?>usersc/plugins/rebrand/admin/settings.php">ReBrand Settings</a>.</p>
+
+    <p>
+      Return to Plugin Manager:
+      <a href="<?= $us_url_root ?>users/admin.php?view=plugins_config&plugin=rebrand">
+        <?= $us_url_root ?>users/admin.php?view=plugins_config&plugin=rebrand
+      </a>
+    </p>
   </div>
 </div>

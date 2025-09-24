@@ -11,27 +11,25 @@ namespace Rebrand;
  * - Keeps row-level backups in us_rebrand_menu_backups.
  * - Provides discovery & simple diff helpers.
  *
- * NOTE:
- *   Your SQL shows branding is stored in `us_menus.brand_html`.
- *   This class is now locked to that schema (no auto-detection).
+ * Security/Policy notes:
+ * - All DB access via DB::getInstance() (no $db parameters).
+ * - All mutating operations restricted to user id === 1.
+ * - No header/footer includes in this library.
  */
 class MenuPatcher
 {
-    /** @var \DB */
-    protected $db;
+    /** Backup table name */
+    protected string $tableBackups = 'us_rebrand_menu_backups';
 
-    /** @var string */
-    protected $tableBackups;
-
-    /** Fixed schema (from your CREATE TABLE) */
+    /** Fixed schema */
     protected string $menuTable   = 'us_menus';
     protected string $contentCol  = 'brand_html';
     protected string $nameCol     = 'menu_name';
     protected string $pkCol       = 'id';
 
-    public function __construct($db, string $tableBackups = 'us_rebrand_menu_backups')
+    public function __construct(string $tableBackups = 'us_rebrand_menu_backups')
     {
-        $this->db = $db;
+        // Allow backup table override if needed, but never accept a DB handle here.
         $this->tableBackups = $tableBackups;
     }
 
@@ -45,6 +43,7 @@ class MenuPatcher
      */
     public function discoverCandidates(int $limit = 10): array
     {
+        $db = \DB::getInstance();
         $ids = [];
         $hints = [
             'logo', 'brand', 'branding', 'social',
@@ -56,7 +55,7 @@ class MenuPatcher
 
         foreach ($hints as $h) {
             $sql = "SELECT `{$this->pkCol}` AS id FROM `{$this->menuTable}` WHERE `{$this->contentCol}` LIKE ? LIMIT ?";
-            $rows = $this->db->query($sql, ['%' . $h . '%', $limit])->results();
+            $rows = $db->query($sql, ['%' . $h . '%', $limit])->results();
             foreach ($rows as $r) {
                 $rid = (int)$r->id;
                 if (!isset($seen[$rid])) {
@@ -81,6 +80,9 @@ class MenuPatcher
      */
     public function apply(array $menuIds, array $context): void
     {
+        $this->assertAdmin();
+        $db = \DB::getInstance();
+
         $menuIds = array_values(array_unique(array_map('intval', $menuIds)));
         if (empty($menuIds)) return;
 
@@ -88,7 +90,10 @@ class MenuPatcher
 
         foreach ($menuIds as $id) {
             $row = $this->getRow($id);
-            if (!$row) continue;
+            if (!$row) {
+                // Skip silently; caller can decide how to surface.
+                continue;
+            }
 
             $current = (string)$row->{$this->contentCol};
 
@@ -102,21 +107,12 @@ class MenuPatcher
         }
     }
 
-    protected function enc(string $html): string {
-        return htmlspecialchars($html, ENT_QUOTES, 'UTF-8');
-    }
-
-    protected function encodedMarkersRegex(): string {
-        // Matches &lt;!-- ReBrand START --&gt; ... &lt;!-- ReBrand END --&gt;
-        return '/&lt;!--\s*ReBrand\s+START\s*--&gt;.*?&lt;!--\s*ReBrand\s+END\s*--&gt;/is';
-    }
-
-    
     /**
      * Produce a simple diff for the specified IDs (shows the *current* inner block).
      */
     public function diff(array $menuIds): string
     {
+        $db = \DB::getInstance();
         $menuIds = array_values(array_unique(array_map('intval', $menuIds)));
         if (empty($menuIds)) return 'No targets provided.';
 
@@ -126,8 +122,9 @@ class MenuPatcher
             if (!$row) continue;
             $curr = (string)$row->{$this->contentCol};
             $inner = $this->extractInner($curr);
-            $out[] = "=== us_menus.id {$id} ({$row->{$this->nameCol}}) ===";
-            $out[] = $this->formatDiff($inner, $inner); // placeholder for now
+            $menuName = (string)$row->{$this->nameCol};
+            $out[] = "=== us_menus.id {$id} ({$menuName}) ===";
+            $out[] = $this->formatDiff($inner, $inner); // placeholder showing current state
         }
         return implode("\n", $out);
     }
@@ -138,11 +135,18 @@ class MenuPatcher
      */
     public function revertLastBackups(int $max = 50): bool
     {
-        $rows = $this->db->query("SELECT * FROM `{$this->tableBackups}` ORDER BY `id` DESC LIMIT {$max}")->results();
+        $this->assertAdmin();
+        $db = \DB::getInstance();
+
+        $rows = $db->query("SELECT * FROM `{$this->tableBackups}` ORDER BY `id` DESC LIMIT {$max}")->results();
         $any = false;
         foreach ($rows as $b) {
-            $id = (int)($b->menu_item_id ?? 0);
-            $content = (string)$b->content_backup;
+            // Accept either menu_id or menu_item_id; both appear in some schemas
+            $id = (int)($b->menu_id ?? 0);
+            if ($id <= 0) {
+                $id = (int)($b->menu_item_id ?? 0);
+            }
+            $content = (string)($b->content_backup ?? '');
             if ($id > 0 && $content !== '') {
                 $this->updateRow($id, $content);
                 $any = true;
@@ -155,26 +159,48 @@ class MenuPatcher
      * Internals
      * ------------------------------------------------------------------- */
 
+    /**
+     * Enforce that only user ID 1 may perform mutating operations.
+     * Throws an Exception if unauthorized.
+     */
+    protected function assertAdmin(): void
+    {
+        global $user;
+        if (!isset($user) || !is_object($user) || !method_exists($user, 'data')) {
+            throw new \Exception('Unauthorized: user context unavailable.');
+        }
+        $data = $user->data();
+        $id = isset($data->id) ? (int)$data->id : 0;
+        if ($id !== 1) {
+            throw new \Exception('Unauthorized: only user ID 1 may perform this action.');
+        }
+    }
+
     protected function getRow(int $id): ?object
     {
+        $db = \DB::getInstance();
         $sql = "SELECT `{$this->pkCol}`, `{$this->nameCol}`, `{$this->contentCol}` FROM `{$this->menuTable}` WHERE `{$this->pkCol}` = ? LIMIT 1";
-        $row = $this->db->query($sql, [$id])->first();
+        $row = $db->query($sql, [$id])->first();
         return $row ?: null;
     }
 
     protected function updateRow(int $id, string $content): void
     {
-        $this->db->update($this->menuTable, $id, [
+        $this->assertAdmin();
+        $db = \DB::getInstance();
+        $db->update($this->menuTable, $id, [
             $this->contentCol => $content,
         ]);
     }
 
     protected function backupRow(int $menuId, ?string $menuName, string $content, string $notes = ''): void
     {
+        $this->assertAdmin();
+        $db = \DB::getInstance();
         try {
-            $this->db->insert($this->tableBackups, [
+            $db->insert($this->tableBackups, [
                 'menu_id'        => $menuId,
-                'menu_item_id'   => $menuId, // using same field for compatibility with earlier schema
+                'menu_item_id'   => $menuId, // compatibility with earlier schema variants
                 'menu_name'      => $menuName,
                 'content_backup' => $content,
                 'notes'          => $notes,
@@ -186,15 +212,15 @@ class MenuPatcher
 
     /**
      * Insert or replace the plugin block inside START/END markers.
-     * If no markers exist yet, we append the block to the end of brand_html.
+     * If no markers exist yet, append the block to the end of brand_html.
+     * Always store ENCODED block in DB (brand_html is encoded).
      */
     protected function upsertBlock(string $current, string $block): string
     {
-        // Always store ENCODED block in DB (brand_html is encoded)
         $encodedBlock = $this->enc("<!-- ReBrand START -->\n{$block}\n<!-- ReBrand END -->");
 
         if (preg_match($this->markersRegex(), $current)) {
-            // replace whatever variant (raw or encoded) with encoded
+            // Replace whatever variant (raw or encoded) with encoded
             return (string)preg_replace($this->markersRegex(), $encodedBlock, $current);
         }
 
@@ -202,7 +228,6 @@ class MenuPatcher
         $sep = (substr($current, -1) === "\n") ? "" : "\n";
         return $current . $sep . $encodedBlock . "\n";
     }
-
 
     /**
      * Build the injected HTML block for logo + social icons.
@@ -215,12 +240,14 @@ class MenuPatcher
         $ver = (int)($ctx['asset_ver'] ?? 1);
         $social = (array)($ctx['social_links'] ?? []);
 
-        // URLs use {{root}} so they work with existing menu rendering
+        // URLs use {{root}} so they work with existing menu rendering (no PHP eval in DB columns)
         $logoUrl = '{{root}}' . $this->verUrl($logo, $ver);
         $logoDarkUrl = $logoDark !== '' ? '{{root}}' . $this->verUrl(ltrim($logoDark, '/'), $ver) : '';
 
-        // Sort socials
-        uasort($social, fn($a,$b) => (int)($a['order'] ?? 0) <=> (int)($b['order'] ?? 0));
+        // Sort socials by configured order
+        uasort($social, function ($a, $b) {
+            return (int)($a['order'] ?? 0) <=> (int)($b['order'] ?? 0);
+        });
 
         $lines = [];
         $lines[] = '<div class="rebrand-header-block" style="display:flex;align-items:center;gap:1rem;">';
@@ -250,6 +277,52 @@ class MenuPatcher
         return implode("\n", $lines);
     }
 
+    protected function enc(string $html): string
+    {
+        return htmlspecialchars($html, ENT_QUOTES, 'UTF-8');
+    }
+
+    protected function extractInner(string $content): string
+    {
+        if (preg_match($this->markersRegex(), $content, $m)) {
+            $block = html_entity_decode($m[0], ENT_QUOTES, 'UTF-8');
+            $inner = preg_replace('/^.*?START\s*-->\s*/is', '', $block);
+            $inner = preg_replace('/\s*<!--\s*ReBrand\s+END\s*-->$/is', '', $inner);
+            return ltrim((string)$inner);
+        }
+        return '';
+    }
+
+    protected function markersRegex(): string
+    {
+        // raw OR encoded markers
+        return '/(?:<!--\s*ReBrand\s+START\s*-->.*?<!--\s*ReBrand\s+END\s*-->)|(?:&lt;!--\s*ReBrand\s+START\s*--&gt;.*?&lt;!--\s*ReBrand\s+END\s*--&gt;)/is';
+    }
+
+    protected function formatDiff(string $old, string $new): string
+    {
+        $a = explode("\n", (string)$old);
+        $b = explode("\n", (string)$new);
+        $out = [];
+        $max = max(count($a), count($b));
+        for ($i = 0; $i < $max; $i++) {
+            $la = $a[$i] ?? '';
+            $lb = $b[$i] ?? '';
+            if ($la === $lb) {
+                $out[] = '  ' . $la;
+            } else {
+                if ($la !== '') $out[] = '- ' . $la;
+                if ($lb !== '') $out[] = '+ ' . $lb;
+            }
+        }
+        return implode("\n", $out);
+    }
+
+    protected function verUrl(string $rel, int $ver): string
+    {
+        $rel = ltrim($rel, '/');
+        return $rel . (strpos($rel, '?') === false ? '?' : '&') . 'v=' . $ver;
+    }
 
     protected function labelForPlatform(string $key): string
     {
@@ -276,49 +349,5 @@ class MenuPatcher
             'instagram' => '◎',
         ];
         return $map[$key] ?? '•';
-    }
-
-    protected function verUrl(string $rel, int $ver): string
-    {
-        $rel = ltrim($rel, '/');
-        return $rel . (strpos($rel, '?') === false ? '?' : '&') . 'v=' . $ver;
-    }
-
-    protected function extractInner(string $content): string
-    {
-        if (preg_match($this->markersRegex(), $content, $m)) {
-            $block = html_entity_decode($m[0], ENT_QUOTES, 'UTF-8');
-            $inner = preg_replace('/^.*?START\s*-->\s*/is', '', $block);
-            $inner = preg_replace('/\s*<!--\s*ReBrand\s+END\s*-->$/is', '', $inner);
-            return ltrim((string)$inner);
-        }
-        return '';
-    }
-
-
-    protected function markersRegex(): string
-    {
-        // raw OR encoded markers
-        return '/(?:<!--\s*ReBrand\s+START\s*-->.*?<!--\s*ReBrand\s+END\s*-->)|(?:&lt;!--\s*ReBrand\s+START\s*--&gt;.*?&lt;!--\s*ReBrand\s+END\s*--&gt;)/is';
-    }
-
-
-    protected function formatDiff(string $old, string $new): string
-    {
-        $a = explode("\n", (string)$old);
-        $b = explode("\n", (string)$new);
-        $out = [];
-        $max = max(count($a), count($b));
-        for ($i = 0; $i < $max; $i++) {
-            $la = $a[$i] ?? '';
-            $lb = $b[$i] ?? '';
-            if ($la === $lb) {
-                $out[] = '  ' . $la;
-            } else {
-                if ($la !== '') $out[] = '- ' . $la;
-                if ($lb !== '') $out[] = '+ ' . $lb;
-            }
-        }
-        return implode("\n", $out);
     }
 }

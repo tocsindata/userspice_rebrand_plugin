@@ -2,7 +2,7 @@
 // usersc/plugins/rebrand/admin/settings.php
 
 /* -------------------------------------------------------------
-   Bootstrap UserSpice (robust) and ensure DB handle
+   Bootstrap UserSpice and environment
 -------------------------------------------------------------- */
 $init = null;
 for ($i = 0; $i < 6; $i++) {
@@ -10,7 +10,15 @@ for ($i = 0; $i < 6; $i++) {
   if ($try && file_exists($try)) { $init = $try; break; }
 }
 if ($init) { require_once $init; } else { die('ReBrand: could not locate users/init.php'); }
-if (!isset($db) || !($db instanceof DB)) { $db = DB::getInstance(); }
+
+/* -------------------------------------------------------------
+   Access control: only user ID 1 may access
+-------------------------------------------------------------- */
+if (!isset($user) || !$user->isLoggedIn() || (int)$user->data()->id !== 1) {
+  // Send them back to the plugin config page
+  header("Location: {$us_url_root}users/admin.php?view=plugins_config&plugin=rebrand");
+  exit;
+}
 
 /* -------------------------------------------------------------
    Constants / helpers
@@ -27,15 +35,33 @@ function rebrand_url($rel, $root, $ver=null){
   return $u;
 }
 
-
-require_once __DIR__ . '/../lib/HeadTagsPatcher.php';
-$headPatch = new \Rebrand\HeadTagsPatcher($db, $tableFileBackups, $abs_us_root, $us_url_root); // ..
-$currentMeta = $headPatch->readCurrentMeta();
-$defaultOgTitle = $currentSite ? $currentSite['site_name'] : ($currentMeta['og_title'] ?? '');
-
+/* -------------------------------------------------------------
+   DB handle (do not pass around; get it where used)
+-------------------------------------------------------------- */
+$db = DB::getInstance();
 
 /* -------------------------------------------------------------
-   Load plugin settings (singleton row id=1) + CSRF + status
+   Load site settings rows first (used for default OG title)
+-------------------------------------------------------------- */
+$siteRows = $db->query("SELECT id, site_name, site_url, copyright FROM settings ORDER BY id ASC")->results();
+$currentSiteId = isset($_POST['site_id']) ? (int)$_POST['site_id'] : ((isset($siteRows[0]->id)) ? (int)$siteRows[0]->id : 0);
+$currentSite   = null;
+if ($currentSiteId) {
+  foreach ($siteRows as $r) {
+    if ((int)$r->id === $currentSiteId) {
+      $currentSite = [
+        'id'        => (int)$r->id,
+        'site_name' => (string)$r->site_name,
+        'site_url'  => isset($r->site_url)?(string)$r->site_url:'',
+        'copyright' => isset($r->copyright)?(string)$r->copyright:'',
+      ];
+      break;
+    }
+  }
+}
+
+/* -------------------------------------------------------------
+   Settings row (singleton id=1) + CSRF + status
 -------------------------------------------------------------- */
 $settingsRow = $db->query("SELECT * FROM `{$tableSettings}` WHERE id = 1")->first();
 if (!$settingsRow) {
@@ -61,11 +87,26 @@ if (class_exists('Token') && method_exists('Token','generate')) {
 }
 
 /* -------------------------------------------------------------
-   Resolve important paths & default logo preview
+   Head meta (via HeadTagsPatcher) and default OG title
+   NOTE: HeadTagsPatcher must self-use DB::getInstance() and US globals.
 -------------------------------------------------------------- */
-$abs_us_root    = isset($abs_us_root) ? rtrim($abs_us_root,'/\\').'/' : rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/').'/';
-$us_url_root = isset($us_url_root) ? $us_url_root : '/';
+$currentMeta = [];
+try {
+  require_once __DIR__ . '/../lib/HeadTagsPatcher.php';
+  $headPatch = new \Rebrand\HeadTagsPatcher(); // no $db, no path params
+  $currentMeta = $headPatch->readCurrentMeta() ?: [];
+} catch (Throwable $e) {
+  // fail soft; form still renders
+  $currentMeta = [];
+}
+$defaultOgTitle = $currentSite ? $currentSite['site_name'] : ($currentMeta['og_title'] ?? '');
 
+/* -------------------------------------------------------------
+   Resolve assets (use US globals as-is; do NOT overwrite them)
+-------------------------------------------------------------- */
+// $abs_us_root and $us_url_root come from init.php and must not be redefined.
+
+// Logo candidates
 $logoCandidates = [
   (string)($settingsRow->logo_path ?? ''),      // plugin-configured
   'users/images/rebrand/logo.png',              // plugin default
@@ -92,19 +133,6 @@ $faviconMtime   = $faviconExists ? date('Y-m-d H:i:s', (int)filemtime($faviconRo
 
 // Menus list for selects
 $menusList = $db->query("SELECT id, menu_name FROM us_menus ORDER BY id ASC")->results();
-
-// Current site rows for Site Settings section
-$siteRows = $db->query("SELECT id, site_name, site_url, copyright FROM settings ORDER BY id ASC")->results();
-$currentSiteId = isset($_POST['site_id']) ? (int)$_POST['site_id'] : ((isset($siteRows[0]->id)) ? (int)$siteRows[0]->id : 0);
-$currentSite   = null;
-if ($currentSiteId) {
-  foreach ($siteRows as $r) { if ((int)$r->id === $currentSiteId) { $currentSite = [
-      'id'=>(int)$r->id,
-      'site_name'=>(string)$r->site_name,
-      'site_url'=> isset($r->site_url)?(string)$r->site_url:'',
-      'copyright'=> isset($r->copyright)?(string)$r->copyright:'',
-  ]; break; } }
-}
 
 // Social links (JSON)
 $socialLinks = json_decode((string)($settingsRow->social_links ?? '{}'), true) ?: [];
@@ -322,66 +350,67 @@ unset($_SESSION['rebrand_flash']);
       </div>
     </div>
   </div>
-<!-- Head Meta (direct edits to usersc/includes/head_tags.php) -->
-<div class="card mb-4">
-  <div class="card-header"><strong>Head Meta</strong> — edits the actual <code>usersc/includes/head_tags.php</code></div>
-  <div class="card-body">
-    <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" class="row g-3">
-      <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
-      <input type="hidden" name="action" value="save_head_meta">
 
-      <div class="col-md-3">
-        <label class="form-label">charset</label>
-        <input class="form-control" name="charset" value="<?= h($currentMeta['charset'] ?: 'utf-8') ?>">
-      </div>
-      <div class="col-md-3">
-        <label class="form-label">X-UA-Compatible</label>
-        <input class="form-control" name="x_ua" value="<?= h($currentMeta['x_ua'] ?: 'IE=edge') ?>">
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">Author</label>
-        <input class="form-control" name="author" value="<?= h($currentMeta['author']) ?>">
-      </div>
+  <!-- Head Meta (direct edits to usersc/includes/head_tags.php) -->
+  <div class="card mb-4">
+    <div class="card-header"><strong>Head Meta</strong> — edits the actual <code>usersc/includes/head_tags.php</code></div>
+    <div class="card-body">
+      <form action="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" method="post" class="row g-3">
+        <?php if ($csrf): ?><input type="hidden" name="csrf" value="<?= $csrf ?>"><?php endif; ?>
+        <input type="hidden" name="action" value="save_head_meta">
 
-      <div class="col-md-6">
-        <label class="form-label">Description</label>
-        <input class="form-control" name="description" value="<?= h($currentMeta['description']) ?>">
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">OG Image URL</label>
-        <input class="form-control" name="og_image" value="<?= h($currentMeta['og_image']) ?>" placeholder="<?=$us_url_root?>users/images/rebrand/icons/apple-touch-icon.png">
-      </div>
+        <div class="col-md-3">
+          <label class="form-label">charset</label>
+          <input class="form-control" name="charset" value="<?= h(($currentMeta['charset'] ?? '') ?: 'utf-8') ?>">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">X-UA-Compatible</label>
+          <input class="form-control" name="x_ua" value="<?= h(($currentMeta['x_ua'] ?? '') ?: 'IE=edge') ?>">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Author</label>
+          <input class="form-control" name="author" value="<?= h($currentMeta['author'] ?? '') ?>">
+        </div>
 
-      <div class="col-md-4">
-        <label class="form-label">OG URL</label>
-        <input class="form-control" name="og_url" value="<?= h($currentMeta['og_url']) ?>" placeholder="<?=$us_url_root?>">
-      </div>
-      <div class="col-md-4">
-        <label class="form-label">OG Type</label>
-        <input class="form-control" name="og_type" value="<?= h($currentMeta['og_type'] ?: 'website') ?>">
-      </div>
-      <div class="col-md-4">
-        <label class="form-label">OG Title</label>
-        <input class="form-control" name="og_title" value="<?= h($defaultOgTitle ?: 'Userspice Site') ?>">
-      </div>
+        <div class="col-md-6">
+          <label class="form-label">Description</label>
+          <input class="form-control" name="description" value="<?= h($currentMeta['description'] ?? '') ?>">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">OG Image URL</label>
+          <input class="form-control" name="og_image" value="<?= h($currentMeta['og_image'] ?? '') ?>" placeholder="<?=$us_url_root?>users/images/rebrand/icons/apple-touch-icon.png">
+        </div>
 
-      <div class="col-md-6">
-        <label class="form-label">Shortcut Icon HREF</label>
-        <input class="form-control" name="shortcut_icon" value="<?= h($currentMeta['shortcut_icon'] ?: $us_url_root.'favicon.ico') ?>">
-        <small class="text-muted">We’ll append <code>?v=<?= (int)$assetVersion ?></code> automatically.</small>
-      </div>
+        <div class="col-md-4">
+          <label class="form-label">OG URL</label>
+          <input class="form-control" name="og_url" value="<?= h($currentMeta['og_url'] ?? '') ?>" placeholder="<?=$us_url_root?>">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">OG Type</label>
+          <input class="form-control" name="og_type" value="<?= h(($currentMeta['og_type'] ?? '') ?: 'website') ?>">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">OG Title</label>
+          <input class="form-control" name="og_title" value="<?= h($defaultOgTitle ?: 'Userspice Site') ?>">
+        </div>
 
-      <div class="col-12 d-flex gap-2 mt-2">
-        <button class="btn btn-primary">Save Head Meta</button>
-        <button class="btn btn-outline-danger" formaction="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" name="action" value="revert_head_tags"
-          onclick="return confirm('Revert head_tags.php from last backup?');">
-          Revert from Backup
-        </button>
-      </div>
-      <small class="text-muted">This writes directly into <code>usersc/includes/head_tags.php</code> and keeps a backup.</small>
-    </form>
+        <div class="col-md-6">
+          <label class="form-label">Shortcut Icon HREF</label>
+          <input class="form-control" name="shortcut_icon" value="<?= h(($currentMeta['shortcut_icon'] ?? '') ?: $us_url_root.'favicon.ico') ?>">
+          <small class="text-muted">We’ll append <code>?v=<?= (int)$assetVersion ?></code> automatically.</small>
+        </div>
+
+        <div class="col-12 d-flex gap-2 mt-2">
+          <button class="btn btn-primary">Save Head Meta</button>
+          <button class="btn btn-outline-danger" formaction="<?= $us_url_root ?>usersc/plugins/rebrand/admin/process.php" name="action" value="revert_head_tags"
+            onclick="return confirm('Revert head_tags.php from last backup?');">
+            Revert from Backup
+          </button>
+        </div>
+        <small class="text-muted">This writes directly into <code>usersc/includes/head_tags.php</code> and keeps a backup.</small>
+      </form>
+    </div>
   </div>
-</div>
 
   <!-- Head Snippet -->
   <div class="row g-3 mb-4">

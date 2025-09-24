@@ -8,6 +8,11 @@ namespace Rebrand;
  *  - Treating it as potentially multi-site (multiple rows).
  *  - Editing ONLY site_name, site_url, and copyright.
  *  - Recording a timestamped backup before any write.
+ *
+ * Rules enforced for this project:
+ *  - DB access is ALWAYS via DB::getInstance() internally.
+ *  - Only user ID 1 may perform write actions (update/revert).
+ *  - No headers/footers or output here—controller handles redirects/UI.
  */
 class SiteSettings
 {
@@ -20,9 +25,10 @@ class SiteSettings
     /** @var string */
     protected string $backupTable = 'us_rebrand_site_backups';
 
-    public function __construct($db, string $settingsTable = 'settings', string $backupTable = 'us_rebrand_site_backups')
+    public function __construct(string $settingsTable = 'settings', string $backupTable = 'us_rebrand_site_backups')
     {
-        $this->db = $db;
+        // Always obtain DB the UserSpice way—no injection.
+        $this->db = \DB::getInstance();
         $this->settingsTable = $settingsTable;
         $this->backupTable = $backupTable;
 
@@ -37,10 +43,11 @@ class SiteSettings
      */
     public function listSites(): array
     {
-        $rows = $this->db->query(
+        $q = $this->db->query(
             "SELECT `id`, `site_name`, `site_url`, `copyright`
              FROM `{$this->settingsTable}` ORDER BY `id` ASC"
-        )->results();
+        );
+        $rows = $q->results();
 
         $out = [];
         foreach ($rows as $r) {
@@ -81,11 +88,13 @@ class SiteSettings
      * Update ONLY site_name, site_url, and copyright for the given settings.id.
      * Creates a backup of the existing values before update.
      *
-     * @throws \Exception on validation errors or DB failure
+     * @throws \Exception on validation errors, permission errors, or DB failure
      */
     public function updateSite(int $id, string $siteName, ?string $siteUrl, ?string $copyright): void
     {
-        // Validate
+        $this->ensureAdmin(); // Only user ID 1 may write.
+
+        // Validate & normalize
         $siteName  = $this->sanitizeSiteName($siteName);
         if ($siteName === '') {
             throw new \Exception('Site name is required and must be ≤ 100 characters.');
@@ -99,7 +108,7 @@ class SiteSettings
             throw new \Exception("settings.id {$id} not found.");
         }
 
-        // Backup current state
+        // Backup current state (required by project rules)
         $this->backup($id, $curr['site_name'], $curr['site_url'], $curr['copyright']);
 
         // Update only the three fields
@@ -114,9 +123,13 @@ class SiteSettings
     /**
      * Restore the most recent backup for a given settings.id.
      * Returns true if a restore occurred.
+     *
+     * @throws \Exception on permission errors or DB failure
      */
     public function revertLastBackup(int $id): bool
     {
+        $this->ensureAdmin(); // Only user ID 1 may write.
+
         $row = $this->db->query(
             "SELECT * FROM `{$this->backupTable}` WHERE `settings_id` = ? ORDER BY `id` DESC LIMIT 1",
             [$id]
@@ -127,10 +140,10 @@ class SiteSettings
         $fields = [
             'site_name' => (string)$row->site_name_backup,
             'site_url'  => $row->site_url_backup !== null ? (string)$row->site_url_backup : null,
+            'copyright' => property_exists($row, 'copyright_backup') && $row->copyright_backup !== null
+                ? (string)$row->copyright_backup
+                : null,
         ];
-        if (property_exists($row, 'copyright_backup')) {
-            $fields['copyright'] = $row->copyright_backup !== null ? (string)$row->copyright_backup : null;
-        }
 
         $this->db->update($this->settingsTable, $id, $fields);
         return true;
@@ -140,9 +153,25 @@ class SiteSettings
      * Internals
      * ------------------------------------------------------------------- */
 
+    /**
+     * Only allow user ID 1 to perform write actions.
+     * @throws \Exception
+     */
+    protected function ensureAdmin(): void
+    {
+        global $user;
+        if (!isset($user) || !is_object($user) || !method_exists($user, 'data')) {
+            throw new \Exception('Permission denied: user context not available.');
+        }
+        $ud = $user->data();
+        if (!isset($ud->id) || (int)$ud->id !== 1) {
+            throw new \Exception('Permission denied: only user ID 1 may perform this action.');
+        }
+    }
+
     protected function ensureBackupTable(): void
     {
-        // Create backup table if not exists
+        // Create backup table if not exists (idempotent)
         $sql = "
             CREATE TABLE IF NOT EXISTS `{$this->backupTable}` (
               `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -157,11 +186,11 @@ class SiteSettings
         ";
         $this->db->query($sql);
 
-        // If an older version exists without copyright_backup, add it.
+        // In case an older version exists without the copyright column, attempt to add it.
         try {
             $this->db->query("ALTER TABLE `{$this->backupTable}` ADD COLUMN `copyright_backup` VARCHAR(255) NULL");
         } catch (\Exception $e) {
-            // Ignore if it already exists.
+            // Ignore if it already exists or the ALTER fails because the column is present.
         }
     }
 
