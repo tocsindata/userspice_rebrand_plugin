@@ -39,6 +39,45 @@ if ((int)$userId !== 1) {
   die('ReBrand: Only User ID 1 may perform these actions.');
 }
 
+if (isset($_POST['rebrand_settings_submit'])) {
+
+    // CSRF protection
+    if (!Token::check(Input::post('csrf'))) {
+        die('Invalid token');
+    }
+
+    // Save settings
+    $db = DB::getInstance();
+    $db->update('us_rebrand_site_settings', 1, [
+        'description'    => Input::post('rb_description'),
+        'author'         => Input::post('rb_author'),
+        'og_url'         => Input::post('rb_og_url'),
+        'og_type'        => Input::post('rb_og_type'),
+        'og_title'       => Input::post('rb_og_title'),
+        'og_description' => Input::post('rb_og_description'),
+        'og_image'       => Input::post('rb_og_image'),
+    ]);
+
+    // Run patcher
+    use Rebrand\HeadTagsPatcher;
+
+    $patcher = new HeadTagsPatcher();
+    $result = $patcher->apply([
+        'description'    => Input::post('rb_description'),
+        'author'         => Input::post('rb_author'),
+        'og_url'         => Input::post('rb_og_url') ?: null,
+        'og_type'        => Input::post('rb_og_type') ?: 'website',
+        'og_title'       => Input::post('rb_og_title'),
+        'og_description' => Input::post('rb_og_description'),
+        'og_image'       => Input::post('rb_og_image'),
+    ]);
+
+    Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand');
+
+}
+
+
+
 /** Paths */
 $usersc        = rtrim($abs_us_root, '/\\') . '/usersc/';
 $imagesDir     = rtrim($abs_us_root, '/\\') . '/users/images/';
