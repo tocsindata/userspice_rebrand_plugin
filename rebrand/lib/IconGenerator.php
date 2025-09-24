@@ -5,19 +5,31 @@ namespace Rebrand;
  * IconGenerator (UserSpice v5 compliant)
  *
  * - Generates favicon/app-icon set from a master PNG.
+ * 
  * - Writes ONLY to the canonical location:
+ * 
  *     $abs_us_root.$us_url_root.'users/images/rebrand/icons'
+ * 
  * - Enforces admin-only (user id 1) for write operations.
+ * 
  * - Creates DB backups in `us_rebrand_file_backups` prior to any overwrite.
+ * 
  * - Maintains a persistent asset_version in
+ * 
  *     $abs_us_root.$us_url_root.'usersc/plugins/rebrand/.asset_version'
+ * 
  *   and appends ?v=<asset_version> to all controlled assets.
+ * 
  * - Emits a head snippet that uses <?=$us_url_root?> for URLs.
+ * 
  *
  * NOTE:
  * - This library throws Exceptions on failure; the admin/process layer should
+ * 
  *   catch and route back to:
+ * 
  *     <?=$us_url_root?>users/admin.php?view=plugins_config&plugin=rebrand
+ * 
  */
 class IconGenerator
 {
