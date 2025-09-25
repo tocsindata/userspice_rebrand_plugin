@@ -21,7 +21,7 @@
 
   <!-- Admin entry point (relative to usersc/plugins/rebrand/) -->
   <admin>admin/settings.php</admin>
-
+  
   <!-- Button text in Plugin Manager -->
   <button>ReBrand</button>
   <fa_icon>fa fa-paint-brush</fa_icon>
