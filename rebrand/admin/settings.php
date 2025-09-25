@@ -9,6 +9,7 @@
  *
  * No header/footer includes here — Plugin Manager provides the chrome.
  */
+ini_set('display_errors', '1'); ini_set('display_startup_errors', '1'); error_reporting(E_ALL);
 
 if (!isset($user) || (int)($user->data()->id ?? 0) !== 1) {
   die('Admin only.');
