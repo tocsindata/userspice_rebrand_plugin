@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugin>
-  <name>ReBrand</name>
+  <name>rebrand</name>
   <folder>rebrand</folder>
   <version>2.0.0</version>
   <release_date>2025-09-24</release_date>
@@ -33,8 +33,6 @@
     <table>us_rebrand_site_backups</table>
   </db_tables>
 
-  <!-- Optional preview/icon (relative path); safe to omit file if not present -->
-  <image>assets/rebrand-preview.png</image>
 
   <!-- Notes for Plugin Manager UI (plain text) -->
   <notes>
