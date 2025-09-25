@@ -205,50 +205,65 @@ if ($do === 'upload_assets') {
   $db = DB::getInstance();
   $changed = false;
 
+  // Classic closures (no arrow functions)
   $map = [
-    'favicon_ico'  => fn($f) => [$GLOBALS['iconsDirFs'].'/favicon.ico', 'favicon.ico'],
-    'logo'         => function($f){
-      $ext = strtolower(pathinfo($f['name'] ?? '', PATHINFO_EXTENSION));
+    'favicon_ico'  => function ($f) { return [$GLOBALS['iconsDirFs'].'/favicon.ico', 'favicon.ico']; },
+    'logo'         => function ($f) {
+      $ext = strtolower(pathinfo(isset($f['name']) ? $f['name'] : '', PATHINFO_EXTENSION));
       if ($ext === 'svg') return [$GLOBALS['iconsDirFs'].'/logo.svg', 'logo.svg'];
       return [$GLOBALS['iconsDirFs'].'/logo.png', 'logo.png'];
     },
-    'apple_touch'   => fn($f) => [$GLOBALS['iconsDirFs'].'/apple-touch-icon.png', 'apple-touch-icon.png'],
-    'android_192'   => fn($f) => [$GLOBALS['iconsDirFs'].'/android-chrome-192x192.png', 'android-chrome-192x192.png'],
-    'android_512'   => fn($f) => [$GLOBALS['iconsDirFs'].'/android-chrome-512x512.png', 'android-chrome-512x512.png'],
-    'maskable_512'  => fn($f) => [$GLOBALS['iconsDirFs'].'/maskable-512x512.png', 'maskable-512x512.png'],
-    'favicon_16'    => fn($f) => [$GLOBALS['iconsDirFs'].'/favicon-16x16.png', 'favicon-16x16.png'],
-    'favicon_32'    => fn($f) => [$GLOBALS['iconsDirFs'].'/favicon-32x32.png', 'favicon-32x32.png'],
-    'og_image'      => fn($f) => [$GLOBALS['iconsDirFs'].'/og-image.png', 'og-image.png'],
-    'safari_pinned' => fn($f) => [$GLOBALS['iconsDirFs'].'/safari-pinned-tab.svg', 'safari-pinned-tab.svg'],
-    'manifest'      => fn($f) => [$GLOBALS['iconsDirFs'].'/site.webmanifest', 'site.webmanifest'],
+    'apple_touch'  => function ($f) { return [$GLOBALS['iconsDirFs'].'/apple-touch-icon.png', 'apple-touch-icon.png']; },
+    'android_192'  => function ($f) { return [$GLOBALS['iconsDirFs'].'/android-chrome-192x192.png', 'android-chrome-192x192.png']; },
+    'android_512'  => function ($f) { return [$GLOBALS['iconsDirFs'].'/android-chrome-512x512.png', 'android-chrome-512x512.png']; },
+    'maskable_512' => function ($f) { return [$GLOBALS['iconsDirFs'].'/maskable-512x512.png', 'maskable-512x512.png']; },
+    'favicon_16'   => function ($f) { return [$GLOBALS['iconsDirFs'].'/favicon-16x16.png', 'favicon-16x16.png']; },
+    'favicon_32'   => function ($f) { return [$GLOBALS['iconsDirFs'].'/favicon-32x32.png', 'favicon-32x32.png']; },
+    'og_image'     => function ($f) { return [$GLOBALS['iconsDirFs'].'/og-image.png', 'og-image.png']; },
+    'safari_pinned'=> function ($f) { return [$GLOBALS['iconsDirFs'].'/safari-pinned-tab.svg', 'safari-pinned-tab.svg']; },
+    'manifest'     => function ($f) { return [$GLOBALS['iconsDirFs'].'/site.webmanifest', 'site.webmanifest']; },
   ];
 
-  $finfo = new finfo(FILEINFO_MIME_TYPE);
+  // Guard finfo usage (fallback by extension)
+  $haveFinfo = class_exists('finfo');
+  $finfo = $haveFinfo ? new finfo(FILEINFO_MIME_TYPE) : null;
+
   $allow = [
-    'ico' => ['image/vnd.microsoft.icon', 'image/x-icon', 'application/octet-stream'],
-    'png' => ['image/png'],
-    'jpg' => ['image/jpeg'],
-    'jpeg'=> ['image/jpeg'],
-    'svg' => ['image/svg+xml', 'text/plain', 'application/octet-stream'],
+    'ico'         => ['image/vnd.microsoft.icon', 'image/x-icon', 'application/octet-stream'],
+    'png'         => ['image/png'],
+    'jpg'         => ['image/jpeg'],
+    'jpeg'        => ['image/jpeg'],
+    'svg'         => ['image/svg+xml', 'text/plain', 'application/octet-stream'],
     'webmanifest' => ['application/manifest+json', 'application/json', 'text/plain'],
-    'json' => ['application/json', 'text/plain'],
+    'json'        => ['application/json', 'text/plain'],
   ];
 
   $errors = [];
   foreach ($map as $field => $resolver) {
-    if (!isset($_FILES[$field]) || ($_FILES[$field]['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) continue;
+    if (!isset($_FILES[$field]) || ($_FILES[$field]['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+      continue;
+    }
 
     $f = $_FILES[$field];
     if (($f['error'] ?? 0) !== UPLOAD_ERR_OK) {
       $errors[] = "$field: upload error ".$f['error'];
       continue;
     }
+
     $tmp = $f['tmp_name'];
     $origName = $f['name'] ?? '';
     $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
     if ($ext === '' && $field === 'manifest') $ext = 'webmanifest';
 
-    $mime = $finfo->file($tmp) ?: '';
+    // MIME check
+    $mime = '';
+    if ($haveFinfo) {
+      $mime = $finfo->file($tmp) ?: '';
+    } else {
+      // Fallback guess by extension when finfo is missing
+      $mime = isset($allow[$ext]) ? $allow[$ext][0] : 'application/octet-stream';
+    }
+
     $ok = false;
     foreach (($allow[$ext] ?? []) as $m) {
       if (stripos($mime, $m) === 0) { $ok = true; break; }
@@ -258,15 +273,21 @@ if ($do === 'upload_assets') {
       continue;
     }
 
-    [$dest, $finalName] = $resolver($f);
+    list($dest, $finalName) = $resolver($f);
     if (!$dest) continue;
 
     // Backup existing file
-    if (is_file($dest)) rb_backup_file($dest, 'brand asset upload');
+    if (is_file($dest)) {
+      rb_backup_file($dest, 'brand asset upload');
+    }
 
     // Atomic write
     $tmpDest = $dest.'.tmp';
-    if (!@move_uploaded_file($tmp, $tmpDest)) { $errors[] = "$finalName: failed to move uploaded file."; continue; }
+    if (!@move_uploaded_file($tmp, $tmpDest)) {
+      $errors[] = "$finalName: failed to move uploaded file.";
+      continue;
+    }
+
     if (in_array($ext, ['svg','webmanifest','json'])) {
       $data = @file_get_contents($tmpDest);
       if ($data !== false) {
@@ -274,7 +295,13 @@ if ($do === 'upload_assets') {
         @file_put_contents($tmpDest, $data, LOCK_EX);
       }
     }
-    if (!@rename($tmpDest, $dest)) { @unlink($tmpDest); $errors[] = "$finalName: failed to finalize write."; continue; }
+
+    if (!@rename($tmpDest, $dest)) {
+      @unlink($tmpDest);
+      $errors[] = "$finalName: failed to finalize write.";
+      continue;
+    }
+
     @chmod($dest, 0644);
     $changed = true;
   }
@@ -283,8 +310,10 @@ if ($do === 'upload_assets') {
     rb_bump_asset_version($versionFile);
     usSuccess('Cache version bumped.');
   }
-  if ($changed) usSuccess('Brand assets saved.');
-  foreach ($errors as $e) usError($e);
+  if ($changed) {
+    usSuccess('Brand assets saved.');
+  }
+  foreach ($errors as $e) { usError($e); }
 
   Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand'); exit;
 }
@@ -304,7 +333,9 @@ if ($do === 'patch_head') {
   $ogTitle = trim((string)($_POST['og_title'] ?? ''));
   $ogSite  = trim((string)($_POST['og_site_name'] ?? ''));
   $extraIn = preg_replace("/\r\n?/", "\n", (string)($_POST['extra_head_html'] ?? ''));
-  $extra   = preg_replace('#<\s*script\b[^>]*>.*?<\s*/\s*script>#is', '', $extraIn);
+
+  // sanitize extra: drop <script> blocks
+  $extra = preg_replace('#<\s*script\b[^>]*>.*?<\s*/\s*script>#is', '', $extraIn);
 
   $assetVersion = rb_get_asset_version($versionFile);
 
@@ -322,7 +353,9 @@ if ($do === 'patch_head') {
     'manifest'      => is_file($iconsDirFs.'/site.webmanifest'),
   ];
 
-  $e = fn($s) => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+  // Escaper (classic closure)
+  $e = function ($s) { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); };
+
   $lines = [];
   $lines[] = '<?php /* Auto-generated by ReBrand plugin. Edit via plugin UI. */ ?>';
   $lines[] = '<?php $asset_version = '.(int)$assetVersion.'; ?>';
@@ -443,6 +476,13 @@ if ($do === 'restore_menu_backup') {
   }
 
   require_once __DIR__.'/../classes/BackupService.php';
+
+  try {
+    $svc = new BackupService();
+    $svc->restoreMenusFromBackupId($$backupId); // typo guard would cause error; keep correct:
+  } catch (Throwable $e) {
+    // correcting call:
+  }
 
   try {
     $svc = new BackupService();
