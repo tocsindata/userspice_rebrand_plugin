@@ -1,25 +1,50 @@
 <?php
-/**
- * ReBrand — configure.php
- * Entry point for the Plugin Manager "Configure" button/tile.
- *
- * URL (from admin): users/admin.php?view=plugins_config&plugin=rebrand
- * Optional panel:   users/admin.php?view=plugins_config&plugin=rebrand&panel=menus|backups
- *
- * Security: Admin only (User ID 1). No header/footer includes here—the
- *           Plugin Manager wraps this file for you.
- */
+// usersc/plugins/rebrand/configure.php
+// No header/footer includes here — the Plugin Manager provides the chrome.
 
-if (!isset($user) || (int)($user->data()->id ?? 0) !== 1) {
-  die('Admin only.');
+// Load UserSpice if not already loaded (keeps plugin usable both inside and outside the manager)
+if (!class_exists('DB')) {
+  // From usersc/plugins/rebrand/ → ../../users/init.php
+  $init = realpath(__DIR__ . '/../../users/init.php');
+  if ($init && file_exists($init)) {
+    require_once $init;
+    $db = DB::getInstance();
+  } else {
+    die('ReBrand plugin: unable to locate users/init.php');
+  }
 }
 
-// panel router (defaults to settings)
-$panel = isset($_GET['panel']) ? (string)$_GET['panel'] : 'settings';
-$panel = strtolower($panel);
+// Access control: only user ID 1
+global $user, $abs_us_root, $us_url_root;
+if (!isset($user) || !$user->isLoggedIn() || (int)$user->data()->id !== 1) {
+  Redirect::to($us_url_root . 'users/admin.php');
+  exit;
+}
 
-// small, self-contained nav (Bootstrap-friendly)
-$base = $us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand';
+// Optional: quick settings read (safe if schema changes)
+$siteSettings = [];
+try {
+  $qry = $db->query("SELECT * FROM settings");
+  foreach ($qry->results() as $row) {
+    $siteSettings[(int)$row->id] = [
+      'site_name'     => (string)$row->site_name,
+      'site_url'      => (string)$row->site_url,
+      'copyright'     => (string)$row->copyright,
+      'contact_email' => (string)($row->contact_email ?? ''),
+    ];
+  }
+} catch (Exception $e) {
+  // non-fatal
+}
+
+// Provide a simple page title if needed by included UIs
+$title = 'ReBrand';
+
+// Panel router
+$panel = isset($_GET['panel']) ? strtolower((string)$_GET['panel']) : 'settings';
+$base  = $us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand';
+
+// Lightweight tabs (Bootstrap-friendly; manager already loads BS in admin)
 ?>
 <div class="mb-3">
   <ul class="nav nav-pills">
@@ -35,18 +60,17 @@ $base = $us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand';
   </ul>
 </div>
 <?php
-
-// include the requested admin panel
-$root = __DIR__.'/admin/';
+// Include the requested admin panel
+$root = __DIR__ . '/admin/';
 switch ($panel) {
   case 'menus':
-    require_once $root.'menus.php';
+    require $root . 'menus.php';
     break;
   case 'backups':
-    require_once $root.'backups.php';
+    require $root . 'backups.php';
     break;
   case 'settings':
   default:
-    require_once $root.'settings.php';
+    require $root . 'settings.php';
     break;
 }
