@@ -19,6 +19,11 @@ if (!isset($user) || (int)($user->data()->id ?? 0) !== 1) {
 
 require_once __DIR__.'/../classes/BackupService.php';
 
+// ---- guarded helpers (per global function rule) ----
+if (!function_exists('rb_h')) {
+  function rb_h($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+}
+
 // Read pagination params (simple)
 $limit  = max(1, (int)($_GET['limit']  ?? 25));
 $offset = max(0, (int)($_GET['offset'] ?? 0));
@@ -35,9 +40,6 @@ try {
   $_SESSION['msg'][] = ['type'=>'danger', 'msg'=>'Failed to load backups: '.$e->getMessage()];
   $fileBackups = $siteBackups = $menuBackups = [];
 }
-
-// Small helper
-function rb_h($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
 ?>
 

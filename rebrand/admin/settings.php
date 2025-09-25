@@ -14,6 +14,9 @@ if (!isset($user) || (int)($user->data()->id ?? 0) !== 1) {
   die('Admin only.');
 }
 
+// bring in guarded helpers like rb_yes_no(), paths, etc.
+require_once __DIR__.'/../functions/rebrand_functions_core.php';
+
 // Helpers / paths
 $iconsDirFs  = rtrim($abs_us_root.$us_url_root, '/').'/users/images/rebrand/icons';
 $iconsDirUrl = $us_url_root.'users/images/rebrand/icons/';
@@ -64,10 +67,6 @@ $detected = [
 // head_tags.php status
 $headFile = rtrim($abs_us_root.$us_url_root, '/').'/users/includes/head_tags.php';
 $headMtime = is_file($headFile) ? date('Y-m-d H:i:s', filemtime($headFile)) : null;
-
-// Utility for small “exists” text
-function rb_yes_no($bool) { return $bool ? '<span class="text-success">yes</span>' : '<span class="text-muted">no</span>'; }
-
 ?>
 
 <!-- ============================

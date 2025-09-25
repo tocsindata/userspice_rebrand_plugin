@@ -18,8 +18,13 @@ if (!isset($user) || (int)($user->data()->id ?? 0) !== 1) {
 // Require class
 require_once __DIR__.'/../classes/MenuPatcher.php';
 
-// Flash helper shortcut
-function rb_flash($type, $msg) { $_SESSION['msg'][] = ['type'=>$type,'msg'=>$msg]; }
+// ---- guarded helper functions (per new rule) ----
+if (!function_exists('rb_flash')) {
+  function rb_flash($type, $msg) { $_SESSION['msg'][] = ['type'=>$type,'msg'=>$msg]; }
+}
+if (!function_exists('rb_h')) {
+  function rb_h($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+}
 
 // Initialize
 $mp = new MenuPatcher();
@@ -55,9 +60,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['local_preview'])) {
   }
 }
 
-// Small esc helper
-function rb_h($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
-
 // Build a compact example rules JSON if none submitted
 if ($rulesJsonForApply === '') {
   $rulesJsonForApply = json_encode([
@@ -74,7 +76,6 @@ if ($rulesJsonForApply === '') {
     // ]
   ], JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES);
 }
-
 ?>
 
 <!-- ============================
@@ -160,7 +161,7 @@ if ($rulesJsonForApply === '') {
   </div>
 </div>
 
-<?php if ($previewResult): 
+<?php if ($previewResult):
   $summary = $previewResult['summary'] ?? ['total_rules'=>0,'will_change'=>0,'skipped'=>0];
   $diffs = $previewResult['diffs'] ?? [];
 ?>

@@ -28,7 +28,7 @@ if (!isset($_GET['do'])) {
   die('No action.');
 }
 
-// Flash helpers (Plugin Manager typically reads $_SESSION['msg'])
+// Flash helpers (guarded)
 if (!function_exists('usSuccess')) {
   function usSuccess($msg){ $_SESSION['msg'][] = ['type'=>'success','msg'=>$msg]; }
 }
@@ -45,53 +45,61 @@ if (!is_dir(dirname($versionFile))) {
   @mkdir(dirname($versionFile), 0755, true);
 }
 
-// Version helpers
-function rb_get_asset_version(string $versionFile): int {
-  $v = 1;
-  if (is_file($versionFile)) {
-    $raw = @file_get_contents($versionFile);
-    $dec = json_decode($raw ?: '1', true);
-    if (is_int($dec)) $v = $dec;
+// Version helpers (guarded)
+if (!function_exists('rb_get_asset_version')) {
+  function rb_get_asset_version($versionFile) {
+    $v = 1;
+    if (is_file($versionFile)) {
+      $raw = @file_get_contents($versionFile);
+      $dec = json_decode($raw ?: '1', true);
+      if (is_int($dec)) $v = $dec;
+    }
+    return max(1, (int)$v);
   }
-  return max(1, (int)$v);
 }
-function rb_bump_asset_version(string $versionFile): int {
-  $next = rb_get_asset_version($versionFile) + 1;
-  @file_put_contents($versionFile, json_encode($next, JSON_UNESCAPED_SLASHES), LOCK_EX);
-  return $next;
+if (!function_exists('rb_bump_asset_version')) {
+  function rb_bump_asset_version($versionFile) {
+    $next = rb_get_asset_version($versionFile) + 1;
+    @file_put_contents($versionFile, json_encode($next, JSON_UNESCAPED_SLASHES), LOCK_EX);
+    return $next;
+  }
 }
 
-// Backups
-function rb_backup_file(string $path, string $note = 'rebrand backup'): void {
-  if (!is_file($path)) return;
-  $db = DB::getInstance();
-  $content = @file_get_contents($path);
-  try {
-    $db->insert('us_rebrand_file_backups', [
-      'took_at'        => date('Y-m-d H:i:s'),
-      'user_id'        => (int)($GLOBALS['user']->data()->id ?? 0),
-      'file_path'      => $path,
-      'content_backup' => $content,
-      'notes'          => $note,
-    ]);
-  } catch (Exception $e) {
-    usError('Backup failed for '.basename($path).': '.$e->getMessage());
+// Backups (guarded)
+if (!function_exists('rb_backup_file')) {
+  function rb_backup_file($path, $note = 'rebrand backup') {
+    if (!is_file($path)) return;
+    $db = DB::getInstance();
+    $content = @file_get_contents($path);
+    try {
+      $db->insert('us_rebrand_file_backups', [
+        'took_at'        => date('Y-m-d H:i:s'),
+        'user_id'        => (int)($GLOBALS['user']->data()->id ?? 0),
+        'file_path'      => $path,
+        'content_backup' => $content,
+        'notes'          => $note,
+      ]);
+    } catch (Exception $e) {
+      usError('Backup failed for '.basename($path).': '.$e->getMessage());
+    }
   }
 }
-function rb_backup_settings(array $snapshot, string $note = 'settings snapshot'): void {
-  $db = DB::getInstance();
-  try {
-    $db->insert('us_rebrand_site_backups', [
-      'took_at'       => date('Y-m-d H:i:s'),
-      'user_id'       => (int)($GLOBALS['user']->data()->id ?? 0),
-      'site_name'     => (string)($snapshot['site_name']     ?? ''),
-      'site_url'      => (string)($snapshot['site_url']      ?? ''),
-      'copyright'     => (string)($snapshot['copyright']     ?? ''),
-      'contact_email' => (string)($snapshot['contact_email'] ?? ''),
-      'notes'         => $note,
-    ]);
-  } catch (Exception $e) {
-    usError('Settings backup failed: '.$e->getMessage());
+if (!function_exists('rb_backup_settings')) {
+  function rb_backup_settings($snapshot, $note = 'settings snapshot') {
+    $db = DB::getInstance();
+    try {
+      $db->insert('us_rebrand_site_backups', [
+        'took_at'       => date('Y-m-d H:i:s'),
+        'user_id'       => (int)($GLOBALS['user']->data()->id ?? 0),
+        'site_name'     => (string)($snapshot['site_name']     ?? ''),
+        'site_url'      => (string)($snapshot['site_url']      ?? ''),
+        'copyright'     => (string)($snapshot['copyright']     ?? ''),
+        'contact_email' => (string)($snapshot['contact_email'] ?? ''),
+        'notes'         => $note,
+      ]);
+    } catch (Exception $e) {
+      usError('Settings backup failed: '.$e->getMessage());
+    }
   }
 }
 
@@ -123,9 +131,7 @@ if ($do === 'save_settings') {
         'contact_email' => (string)($row->contact_email ?? ''),
       ];
     }
-  } catch (Exception $e) {
-    // continue with empty snapshot
-  }
+  } catch (Exception $e) { /* continue */ }
 
   // Revert from latest backup
   if (isset($_POST['revert']) && $_POST['revert'] == '1') {
@@ -230,9 +236,8 @@ if ($do === 'upload_assets') {
 
   $errors = [];
   foreach ($map as $field => $resolver) {
-    if (!isset($_FILES[$field]) || ($_FILES[$field]['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
-      continue;
-    }
+    if (!isset($_FILES[$field]) || ($_FILES[$field]['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) continue;
+
     $f = $_FILES[$field];
     if (($f['error'] ?? 0) !== UPLOAD_ERR_OK) {
       $errors[] = "$field: upload error ".$f['error'];
@@ -257,16 +262,11 @@ if ($do === 'upload_assets') {
     if (!$dest) continue;
 
     // Backup existing file
-    if (is_file($dest)) {
-      rb_backup_file($dest, 'brand asset upload');
-    }
+    if (is_file($dest)) rb_backup_file($dest, 'brand asset upload');
 
     // Atomic write
     $tmpDest = $dest.'.tmp';
-    if (!@move_uploaded_file($tmp, $tmpDest)) {
-      $errors[] = "$finalName: failed to move uploaded file.";
-      continue;
-    }
+    if (!@move_uploaded_file($tmp, $tmpDest)) { $errors[] = "$finalName: failed to move uploaded file."; continue; }
     if (in_array($ext, ['svg','webmanifest','json'])) {
       $data = @file_get_contents($tmpDest);
       if ($data !== false) {
@@ -274,11 +274,7 @@ if ($do === 'upload_assets') {
         @file_put_contents($tmpDest, $data, LOCK_EX);
       }
     }
-    if (!@rename($tmpDest, $dest)) {
-      @unlink($tmpDest);
-      $errors[] = "$finalName: failed to finalize write.";
-      continue;
-    }
+    if (!@rename($tmpDest, $dest)) { @unlink($tmpDest); $errors[] = "$finalName: failed to finalize write."; continue; }
     @chmod($dest, 0644);
     $changed = true;
   }
@@ -287,10 +283,8 @@ if ($do === 'upload_assets') {
     rb_bump_asset_version($versionFile);
     usSuccess('Cache version bumped.');
   }
-  if ($changed) {
-    usSuccess('Brand assets saved.');
-  }
-  foreach ($errors as $e) { usError($e); }
+  if ($changed) usSuccess('Brand assets saved.');
+  foreach ($errors as $e) usError($e);
 
   Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand'); exit;
 }
@@ -302,8 +296,6 @@ if ($do === 'patch_head') {
   if ($_SERVER['REQUEST_METHOD'] !== 'POST') { die('Invalid request.'); }
   if (!Token::check($_POST['csrf'] ?? '')) { die('CSRF token invalid.'); }
 
-  $db = DB::getInstance();
-
   $desc    = preg_replace("/\r\n?/", "\n", (string)($_POST['meta_description'] ?? ''));
   $author  = trim((string)($_POST['meta_author'] ?? ''));
   $robots  = trim((string)($_POST['meta_robots'] ?? ''));
@@ -312,9 +304,7 @@ if ($do === 'patch_head') {
   $ogTitle = trim((string)($_POST['og_title'] ?? ''));
   $ogSite  = trim((string)($_POST['og_site_name'] ?? ''));
   $extraIn = preg_replace("/\r\n?/", "\n", (string)($_POST['extra_head_html'] ?? ''));
-
-  // sanitize extra: drop <script> blocks
-  $extra = preg_replace('#<\s*script\b[^>]*>.*?<\s*/\s*script>#is', '', $extraIn);
+  $extra   = preg_replace('#<\s*script\b[^>]*>.*?<\s*/\s*script>#is', '', $extraIn);
 
   $assetVersion = rb_get_asset_version($versionFile);
 
@@ -466,7 +456,7 @@ if ($do === 'restore_menu_backup') {
 }
 
 // ===================================================
-// 7) Menu Apply (preview was in menus.php; this is the writer)
+// 7) Menu Apply (writer)
 // ===================================================
 if ($do === 'menu_apply') {
   if ($_SERVER['REQUEST_METHOD'] !== 'POST') { die('Invalid request.'); }
@@ -488,9 +478,7 @@ if ($do === 'menu_apply') {
     $backupId = (int)($result['backup_id'] ?? 0);
 
     if (!empty($result['errors'])) {
-      foreach ($result['errors'] as $err) {
-        usError($err);
-      }
+      foreach ($result['errors'] as $err) usError($err);
     }
     usSuccess("Menu changes applied. Updated rows: {$updated}".($backupId ? " (backup #{$backupId})" : ''));
   } catch (Throwable $e) {
