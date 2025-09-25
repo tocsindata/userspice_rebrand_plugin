@@ -1,190 +1,122 @@
 <?php
 /**
- * UserSpice ReBrand Plugin — Installer
+ * ReBrand — install.php
+ * Runs from Plugin Manager during plugin install/enable.
  *
- * Responsibilities
- *   - Create (if missing):
- *       us_rebrand_settings (singleton row id=1 with asset_version, etc.)
- *       us_rebrand_menu_backups
- *       us_rebrand_file_backups
- *       us_rebrand_site_backups
- *   - Seed us_rebrand_settings row id=1 if absent (no-op if present)
+ * - Creates backup tables (IF NOT EXISTS)
+ * - Ensures filesystem directories exist
+ * - Seeds storage/versions/asset_version.json with 1 (if missing)
  *
- * Rules enforced:
- *   - Uses UserSpice globals ($abs_us_root, $us_url_root)
- *   - DB access ONLY via DB::getInstance() (no $db param)
- *   - Only user ID 1 may run
- *   - No header/footer includes (Plugin Manager supplies chrome)
- *   - Clean error handling (no fatal white screens)
+ * Security: require User ID 1 (super admin).
  */
 
-////////////////////////////////////////////////////////////////
-// Bootstrap UserSpice (require init.php) using real paths
-////////////////////////////////////////////////////////////////
-if (!isset($abs_us_root) || !isset($us_url_root)) {
-  $us_root_guess = realpath(__DIR__ . '/../../..'); // usersc/plugins/rebrand -> usersc
-  $init = $us_root_guess . '/users/init.php';
-  if (!file_exists($init)) {
-    // Minimal, safe output (no white screen)
-    echo '<div class="alert alert-danger">ReBrand installer error: users/init.php not found.</div>';
-    return;
-  }
-  require_once $init;
+if (!isset($user) || (int)($user->data()->id ?? 0) !== 1) {
+  die('Admin only.');
 }
 
-////////////////////////////////////////////////////////////////
-// Guard: Only User ID 1
-////////////////////////////////////////////////////////////////
-global $user, $abs_us_root, $us_url_root;
-if (!isset($user) || !$user->isLoggedIn()) {
-  echo '<div class="alert alert-danger">ReBrand installer: You must be logged in as User ID 1.</div>';
-  return;
+// Flash helpers (Plugin Manager usually reads $_SESSION["msg"])
+if (!function_exists('usSuccess')) {
+  function usSuccess($msg){ $_SESSION['msg'][] = ['type'=>'success','msg'=>$msg]; }
 }
-$userId = (int)($user->data()->id ?? 0);
-if ($userId !== 1) {
-  echo '<div class="alert alert-danger">ReBrand installer: Only User ID 1 may run the installer.</div>';
-  return;
+if (!function_exists('usError')) {
+  function usError($msg){ $_SESSION['msg'][] = ['type'=>'danger','msg'=>$msg]; }
 }
 
-////////////////////////////////////////////////////////////////
-// DB handle (UserSpice way)
-////////////////////////////////////////////////////////////////
+$db = DB::getInstance();
+
+// ---------- 1) Create Tables ----------
 try {
-  $db = DB::getInstance();
-} catch (Exception $e) {
-  echo '<div class="alert alert-danger">ReBrand installer DB error: '
-     . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . '</div>';
-  return;
-}
-
-////////////////////////////////////////////////////////////////
-// Table names
-////////////////////////////////////////////////////////////////
-$tableSettings    = 'us_rebrand_settings';
-$tableMenuBackups = 'us_rebrand_menu_backups';
-$tableFileBackups = 'us_rebrand_file_backups';
-$tableSiteBackups = 'us_rebrand_site_backups';
-
-$messages = [];
-$errors   = [];
-
-////////////////////////////////////////////////////////////////
-// DDL + seed (safe to re-run)
-////////////////////////////////////////////////////////////////
-try {
-  // 1) Settings table (singleton)
+  // Stores full previous contents of modified files (e.g., head_tags.php, icons)
   $db->query("
-    CREATE TABLE IF NOT EXISTS `{$tableSettings}` (
-      `id` INT UNSIGNED NOT NULL,
-      `asset_version` INT UNSIGNED NOT NULL DEFAULT 1,
-      `logo_path` VARCHAR(255) DEFAULT 'users/images/rebrand/logo.png',
-      `logo_dark_path` VARCHAR(255) DEFAULT NULL,
-      `favicon_mode` ENUM('single','multi') DEFAULT 'single',
-      `favicon_root` VARCHAR(255) DEFAULT 'users/images/rebrand/icons',
-      `favicon_html` MEDIUMTEXT DEFAULT NULL,
-      `social_links` MEDIUMTEXT DEFAULT NULL,
-      `menu_target_ids` MEDIUMTEXT DEFAULT NULL,
-      `header_override_enabled` TINYINT(1) NOT NULL DEFAULT 1,
-      `id1_only` TINYINT(1) NOT NULL DEFAULT 1,
-      PRIMARY KEY (`id`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+    CREATE TABLE IF NOT EXISTS `us_rebrand_file_backups` (
+      `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      `took_at` DATETIME NOT NULL,
+      `user_id` INT UNSIGNED NOT NULL DEFAULT 0,
+      `file_path` VARCHAR(255) NOT NULL,
+      `content_backup` LONGBLOB NULL,
+      `notes` VARCHAR(255) NULL,
+      PRIMARY KEY (`id`),
+      KEY `took_at` (`took_at`),
+      KEY `user_id` (`user_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   ");
-  $messages[] = "Ensured table {$tableSettings}";
 
-  // Upsert/seed singleton row id=1
-  $exists = $db->query("SELECT `id` FROM `{$tableSettings}` WHERE `id` = 1 LIMIT 1")->first();
-  if (!$exists) {
-    $db->insert($tableSettings, [
-      'id'                      => 1,
-      'asset_version'           => 1,
-      'logo_path'               => 'users/images/rebrand/logo.png',
-      'logo_dark_path'          => null,
-      'favicon_mode'            => 'single',
-      'favicon_root'            => 'users/images/rebrand/icons',
-      'favicon_html'            => null,
-      'social_links'            => json_encode(new stdClass()),
-      'menu_target_ids'         => json_encode([]),
-      'header_override_enabled' => 1,
-      'id1_only'                => 1,
-    ]);
-    $messages[] = "Seeded {$tableSettings} row id=1";
+  // Stores menu structure snapshots (JSON dump or serialized data)
+  $db->query("
+    CREATE TABLE IF NOT EXISTS `us_rebrand_menu_backups` (
+      `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      `took_at` DATETIME NOT NULL,
+      `user_id` INT UNSIGNED NOT NULL DEFAULT 0,
+      `menu_json` MEDIUMTEXT NULL,
+      `notes` VARCHAR(255) NULL,
+      PRIMARY KEY (`id`),
+      KEY `took_at` (`took_at`),
+      KEY `user_id` (`user_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  // Stores snapshots of the main settings table
+  $db->query("
+    CREATE TABLE IF NOT EXISTS `us_rebrand_site_backups` (
+      `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      `took_at` DATETIME NOT NULL,
+      `user_id` INT UNSIGNED NOT NULL DEFAULT 0,
+      `site_name` VARCHAR(150) NULL,
+      `site_url` VARCHAR(255) NULL,
+      `copyright` VARCHAR(255) NULL,
+      `contact_email` VARCHAR(150) NULL,
+      `notes` VARCHAR(255) NULL,
+      PRIMARY KEY (`id`),
+      KEY `took_at` (`took_at`),
+      KEY `user_id` (`user_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  ");
+
+  usSuccess('ReBrand: database tables verified/created.');
+} catch (Exception $e) {
+  usError('ReBrand: failed creating tables — '.$e->getMessage());
+}
+
+// ---------- 2) Ensure Directories ----------
+$iconsDirFs = rtrim($abs_us_root.$us_url_root, '/').'/users/images/rebrand/icons';
+$pluginStorageDir = __DIR__.'/storage';
+$versionDir = $pluginStorageDir.'/versions';
+
+foreach ([$iconsDirFs, $pluginStorageDir, $versionDir] as $dir) {
+  if (!is_dir($dir)) {
+    @mkdir($dir, 0755, true);
+  }
+}
+if (is_dir($iconsDirFs)) {
+  usSuccess('ReBrand: icons directory ready: '.$iconsDirFs);
+} else {
+  usError('ReBrand: unable to create icons directory: '.$iconsDirFs);
+}
+
+// Optional: write a minimal .htaccess to the plugin storage to reduce exposure (non-fatal)
+$htaccess = $pluginStorageDir.'/.htaccess';
+if (!is_file($htaccess)) {
+  @file_put_contents($htaccess, "Options -Indexes\n", LOCK_EX);
+}
+
+// ---------- 3) Seed Asset Version ----------
+$versionFile = $versionDir.'/asset_version.json';
+if (!is_file($versionFile)) {
+  @file_put_contents($versionFile, json_encode(1, JSON_UNESCAPED_SLASHES), LOCK_EX);
+  if (is_file($versionFile)) {
+    usSuccess('ReBrand: initialized asset_version.json to 1.');
   } else {
-    $messages[] = "{$tableSettings} row id=1 already present";
+    usError('ReBrand: failed to initialize asset_version.json.');
   }
-
-  // 2) Menu backups
-  $db->query("
-    CREATE TABLE IF NOT EXISTS `{$tableMenuBackups}` (
-      `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-      `menu_id` INT NULL,
-      `menu_item_id` INT NULL,
-      `menu_name` VARCHAR(255) NULL,
-      `content_backup` MEDIUMTEXT NOT NULL,
-      `notes` VARCHAR(255) NULL,
-      `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (`id`),
-      KEY `idx_menu_item_id` (`menu_item_id`),
-      KEY `idx_menu_id` (`menu_id`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-  ");
-  $messages[] = "Ensured table {$tableMenuBackups}";
-
-  // 3) File backups (e.g., usersc/includes/head_tags.php)
-  $db->query("
-    CREATE TABLE IF NOT EXISTS `{$tableFileBackups}` (
-      `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-      `path` VARCHAR(512) NOT NULL,
-      `content_backup` MEDIUMTEXT NOT NULL,
-      `notes` VARCHAR(255) NULL,
-      `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (`id`),
-      KEY `idx_path` (`path`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-  ");
-  $messages[] = "Ensured table {$tableFileBackups}";
-
-  // 4) Site settings backups
-  $db->query("
-    CREATE TABLE IF NOT EXISTS `{$tableSiteBackups}` (
-      `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-      `settings_id` INT NOT NULL,
-      `site_name_backup` VARCHAR(100) NOT NULL,
-      `site_url_backup` VARCHAR(255) NULL,
-      `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (`id`),
-      KEY `idx_settings_id` (`settings_id`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-  ");
-  $messages[] = "Ensured table {$tableSiteBackups}";
-
-} catch (Exception $e) {
-  $errors[] = 'Install error: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8');
+} else {
+  // Validate it’s an integer; if not, reset to 1
+  $raw = @file_get_contents($versionFile);
+  $val = json_decode($raw ?: '1', true);
+  if (!is_int($val)) {
+    @file_put_contents($versionFile, json_encode(1, JSON_UNESCAPED_SLASHES), LOCK_EX);
+    usSuccess('ReBrand: repaired invalid asset_version.json (reset to 1).');
+  }
 }
 
-////////////////////////////////////////////////////////////////
-// Minimal UI for Plugin Manager context (no headers/footers)
-////////////////////////////////////////////////////////////////
-?>
-<div class="card">
-  <div class="card-header"><strong>ReBrand — Install</strong></div>
-  <div class="card-body">
-    <?php if (!empty($messages)) : ?>
-      <div class="alert alert-success" style="white-space: pre-wrap;">
-        <?= htmlspecialchars(implode("\n", $messages), ENT_QUOTES, 'UTF-8') ?>
-      </div>
-    <?php endif; ?>
-
-    <?php if (!empty($errors)) : ?>
-      <div class="alert alert-danger" style="white-space: pre-wrap;">
-        <?= htmlspecialchars(implode("\n", $errors), ENT_QUOTES, 'UTF-8') ?>
-      </div>
-    <?php endif; ?>
-
-    <p>
-      Return to Plugin Manager:
-      <a href="<?= $us_url_root ?>users/admin.php?view=plugins_config&plugin=rebrand">
-        <?= $us_url_root ?>users/admin.php?view=plugins_config&plugin=rebrand
-      </a>
-    </p>
-  </div>
-</div>
+// Done — Plugin Manager will continue flow.
+// No redirect here; this file is included by the installer context.

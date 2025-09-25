@@ -1,278 +1,188 @@
 <?php
 /**
- * UserSpice ReBrand Plugin — Uninstaller
+ * ReBrand — uninstall.php
  *
- * Actions (POST only, CSRF-protected):
- *  - disable: Soft uninstall (turn off runtime integration) but keep all data/backups/assets.
- *  - purge:   Attempt to restore usersc/includes/head_tags.php from last backup (or strip markers),
- *             then drop plugin tables and remove plugin-created asset directories.
+ * Behavior:
+ *  - Default: Disable & keep data (no destructive actions).
+ *  - Optional Purge (when posted with purge=1): 
+ *      1) Attempt to restore users/includes/head_tags.php from latest backup.
+ *      2) Drop plugin backup tables.
+ *      3) Delete plugin-created asset directories/files.
  *
- * Rules:
- *  - Use $abs_us_root / $us_url_root as-is for real paths and URLs.
- *  - DB access ONLY via DB::getInstance() (no $db params).
- *  - Only User ID 1 may run actions.
- *  - No header/footer includes; Plugin Manager supplies chrome.
- *  - Clean error handling (no white screens).
+ * Security: User ID 1 only. POST actions require CSRF token.
+ *
+ * This file may be included by the Plugin Manager during uninstall/deactivate.
  */
 
-///////////////////////////////////////////////////////////////
-// Bootstrap UserSpice using real paths
-///////////////////////////////////////////////////////////////
-if (!isset($abs_us_root) || !isset($us_url_root)) {
-  $us_root_guess = realpath(__DIR__ . '/../../..'); // usersc/plugins/rebrand -> usersc
-  $init = $us_root_guess . '/users/init.php';
-  if (!file_exists($init)) {
-    echo '<div class="alert alert-danger">ReBrand uninstaller error: users/init.php not found.</div>';
-    return;
-  }
-  require_once $init;
+if (!isset($user) || (int)($user->data()->id ?? 0) !== 1) {
+  die('Admin only.');
 }
 
-global $user, $abs_us_root, $us_url_root;
-
-///////////////////////////////////////////////////////////////
-// Guard: Only logged-in User ID 1
-///////////////////////////////////////////////////////////////
-if (!isset($user) || !$user->isLoggedIn()) {
-  echo '<div class="alert alert-danger">ReBrand uninstaller: You must be logged in as User ID 1.</div>';
-  return;
+// Flash helpers
+if (!function_exists('usSuccess')) {
+  function usSuccess($msg){ $_SESSION['msg'][] = ['type'=>'success','msg'=>$msg]; }
 }
-$userId = (int)($user->data()->id ?? 0);
-if ($userId !== 1) {
-  echo '<div class="alert alert-danger">ReBrand uninstaller: Only User ID 1 may perform uninstall actions.</div>';
-  return;
+if (!function_exists('usError')) {
+  function usError($msg){ $_SESSION['msg'][] = ['type'=>'danger','msg'=>$msg]; }
+}
+if (!function_exists('usInfo')) {
+  function usInfo($msg){ $_SESSION['msg'][] = ['type'=>'info','msg'=>$msg]; }
 }
 
-///////////////////////////////////////////////////////////////
-// DB handle (UserSpice way)
-///////////////////////////////////////////////////////////////
-try {
-  $db = DB::getInstance();
-} catch (Exception $e) {
-  echo '<div class="alert alert-danger">ReBrand uninstaller DB error: '
-     . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . '</div>';
-  return;
-}
+$db = DB::getInstance();
 
-///////////////////////////////////////////////////////////////
-// Paths (filesystem) and tables
-// NOTE: Per project rule, build paths from $abs_us_root.$us_url_root.'...'
-///////////////////////////////////////////////////////////////
-$fsRootBase  = rtrim($abs_us_root, '/\\') . rtrim($us_url_root, '/'); // filesystem base corresponding to URL root
-$userscPath  = $fsRootBase . '/usersc';
-$imagesPath  = $fsRootBase . '/users/images';
-$rebrandPath = $imagesPath . '/rebrand';
-$iconsPath   = $rebrandPath . '/icons';
-$headTags    = $userscPath . '/includes/head_tags.php';
+// Paths
+$iconsDirFs       = rtrim($abs_us_root.$us_url_root, '/').'/users/images/rebrand/icons';
+$pluginStorageDir = __DIR__.'/storage';
+$versionDir       = $pluginStorageDir.'/versions';
+$versionFile      = $versionDir.'/asset_version.json';
+$headFile         = rtrim($abs_us_root.$us_url_root, '/').'/users/includes/head_tags.php';
 
-$tableSettings    = 'us_rebrand_settings';
-$tableMenuBackups = 'us_rebrand_menu_backups';
-$tableFileBackups = 'us_rebrand_file_backups';
-$tableSiteBackups = 'us_rebrand_site_backups';
-
-///////////////////////////////////////////////////////////////
-// CSRF helper
-///////////////////////////////////////////////////////////////
-function rebrand_csrf_is_valid(): bool {
-  if (class_exists('Token') && method_exists('Token', 'check')) {
-    $token = $_POST['csrf'] ?? '';
-    return Token::check($token);
-  }
-  return false;
-}
-
-///////////////////////////////////////////////////////////////
-// Atomic file write helper
-///////////////////////////////////////////////////////////////
-function rebrand_atomic_write(string $path, string $content): bool {
-  $dir = dirname($path);
-  if (!is_dir($dir)) {
-    if (!mkdir($dir, 0755, true) && !is_dir($dir)) {
-      throw new Exception("Failed to create directory: {$dir}");
-    }
-  }
-  $tmp = tempnam($dir, '.rebrand.tmp.');
-  if ($tmp === false) {
-    throw new Exception("Failed to create temp file in {$dir}");
-  }
-  $bytes = file_put_contents($tmp, $content);
-  if ($bytes === false) {
-    @unlink($tmp);
-    throw new Exception("Failed to write to temp file: {$tmp}");
-  }
-  if (!@rename($tmp, $path)) {
-    @unlink($tmp);
-    throw new Exception("Failed to move temp file into place: {$path}");
-  }
+// Utilities
+function rb_atomic_write($path, $content) {
+  $tmp = $path.'.tmp';
+  if (@file_put_contents($tmp, $content, LOCK_EX) === false) return false;
+  if (!@rename($tmp, $path)) { @unlink($tmp); return false; }
+  @chmod($path, 0644);
   return true;
 }
-
-///////////////////////////////////////////////////////////////
-// Restore head_tags.php from latest backup (if available)
-// (DB fetched internally; do NOT pass $db)
-///////////////////////////////////////////////////////////////
-function rebrand_restore_head_from_backup(string $tableFileBackups, string $headTagsPath): bool {
-  try {
-    $db = DB::getInstance();
-    $row = $db->query(
-      "SELECT `content_backup` FROM `{$tableFileBackups}` WHERE `path` = ? ORDER BY `id` DESC LIMIT 1",
-      [$headTagsPath]
-    )->first();
-    if ($row && isset($row->content_backup)) {
-      rebrand_atomic_write($headTagsPath, (string)$row->content_backup);
-      return true;
-    }
-  } catch (Exception $e) {
-    // swallow; caller handles messaging
-  }
-  return false;
-}
-
-///////////////////////////////////////////////////////////////
-// Remove ONLY our injected block from head_tags.php if no backup
-///////////////////////////////////////////////////////////////
-function rebrand_strip_markers_from_head(string $headTagsPath): bool {
-  if (!file_exists($headTagsPath)) return false;
-  $contents = file_get_contents($headTagsPath);
-  if ($contents === false) return false;
-
-  $pattern = '/<!--\s*ReBrand START\s*-->.*?<!--\s*ReBrand END\s*-->/is';
-  $stripped = preg_replace($pattern, "<!-- ReBrand START -->\n<!-- ReBrand END -->", $contents);
-  if ($stripped === null) return false;
-
-  if ($stripped !== $contents) {
-    rebrand_atomic_write($headTagsPath, $stripped);
-    return true;
-  }
-  return false;
-}
-
-///////////////////////////////////////////////////////////////
-// Recursively delete a directory (defensive)
-///////////////////////////////////////////////////////////////
-function rebrand_rrmdir(string $dir): void {
+function rb_rrmdir($dir) {
   if (!is_dir($dir)) return;
   $items = scandir($dir);
   if ($items === false) return;
   foreach ($items as $item) {
-    if ($item === '.' || $item === '..') continue;
-    $path = $dir . DIRECTORY_SEPARATOR . $item;
+    if ($item === '.' || $item === '-') continue;
+    if ($item === '..') continue;
+    $path = $dir.DIRECTORY_SEPARATOR.$item;
     if (is_dir($path)) {
-      rebrand_rrmdir($path);
+      rb_rrmdir($path);
     } else {
       @unlink($path);
     }
   }
   @rmdir($dir);
 }
-
-///////////////////////////////////////////////////////////////
-// Handle actions
-///////////////////////////////////////////////////////////////
-$action   = $_POST['action'] ?? '';
-$messages = [];
-$errors   = [];
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-  if (!rebrand_csrf_is_valid()) {
-    $errors[] = 'Invalid CSRF token. Please try again.';
-  } else {
-    if ($action === 'disable') {
-      // Soft uninstall: disable features but keep data intact
-      try {
-        $exists = $db->query("SELECT `id` FROM `{$tableSettings}` WHERE `id` = 1 LIMIT 1")->first();
-        if ($exists) {
-          $db->update($tableSettings, 1, ['header_override_enabled' => 0]);
-        }
-        $messages[] = 'ReBrand disabled. Data and backups were kept.';
-      } catch (Exception $e) {
-        $errors[] = 'Failed to disable plugin state: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8');
+function rb_restore_head_from_backup($db, $target) {
+  try {
+    $bak = $db->query("SELECT * FROM us_rebrand_file_backups WHERE file_path LIKE ? ORDER BY took_at DESC, id DESC LIMIT 1", [$target])->first();
+    if (!$bak) {
+      // try a LIKE match if exact path not stored identically
+      $like = '%/users/includes/head_tags.php';
+      $bak = $db->query("SELECT * FROM us_rebrand_file_backups WHERE file_path LIKE ? ORDER BY took_at DESC, id DESC LIMIT 1", [$like])->first();
+    }
+    if ($bak && isset($bak->content_backup)) {
+      @mkdir(dirname($target), 0755, true);
+      $content = is_resource($bak->content_backup) ? stream_get_contents($bak->content_backup) : $bak->content_backup;
+      if ($content === false) $content = '';
+      $content = preg_replace("/\r\n?/", "\n", $content);
+      if (!rb_atomic_write($target, $content)) {
+        usError('Failed to restore head_tags.php from backup (write error).');
+        return false;
       }
-    } elseif ($action === 'purge') {
-      // Destructive cleanup with best-effort restore
-      try {
-        // 1) Attempt to restore head_tags.php from backup; else strip our block
-        $restored = rebrand_restore_head_from_backup($tableFileBackups, $headTags);
-        if (!$restored) {
-          rebrand_strip_markers_from_head($headTags);
-        }
-
-        // 2) Drop plugin tables (ignore errors if they don't exist)
-        try { $db->query("DROP TABLE IF EXISTS `{$tableMenuBackups}`"); } catch (Exception $e) {}
-        try { $db->query("DROP TABLE IF EXISTS `{$tableFileBackups}`"); } catch (Exception $e) {}
-        try { $db->query("DROP TABLE IF EXISTS `{$tableSiteBackups}`"); } catch (Exception $e) {}
-        try { $db->query("DROP TABLE IF EXISTS `{$tableSettings}`");    } catch (Exception $e) {}
-
-        // 3) Delete asset directories
-        rebrand_rrmdir($iconsPath);
-        rebrand_rrmdir($rebrandPath);
-
-        $messages[] = 'ReBrand purged: attempted restore/cleanup of head tags, tables dropped, and asset directories removed.';
-      } catch (Exception $e) {
-        $errors[] = 'Failed to purge plugin data: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8');
-      }
+      usSuccess('Restored head_tags.php from latest backup.');
+      return true;
     } else {
-      $errors[] = 'Unknown action.';
+      usInfo('No head_tags.php backup found to restore.');
+      return false;
+    }
+  } catch (Exception $e) {
+    usError('Error restoring head_tags.php: '.$e->getMessage());
+    return false;
+  }
+}
+
+// If not a POST, just inform what will happen on purge; Plugin Manager may ignore output.
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+  usInfo('ReBrand: Uninstall initialized. By default, data is preserved. Submit with purge=1 to drop tables and delete files.');
+  // Do not redirect; the Plugin Manager controls flow.
+  return;
+}
+
+// POSTed — verify CSRF and decide action
+if (!Token::check($_POST['csrf'] ?? '')) {
+  die('CSRF token invalid.');
+}
+
+$purge = isset($_POST['purge']) && (int)$_POST['purge'] === 1;
+$restoreHead = isset($_POST['restore_head']) && (int)$_POST['restore_head'] === 1;
+
+if (!$purge) {
+  // Disable-only path
+  usSuccess('ReBrand: plugin disabled. All data and backups preserved.');
+  // No redirects; Plugin Manager flow continues.
+  return;
+}
+
+// P U R G E  mode
+$hadError = false;
+
+// 1) Restore head_tags.php if requested
+if ($restoreHead) {
+  $ok = rb_restore_head_from_backup($db, $headFile);
+  if (!$ok) {
+    // Not fatal — continue purge
+  }
+}
+
+// 2) Drop plugin tables
+try {
+  $db->query("DROP TABLE IF EXISTS `us_rebrand_file_backups`");
+  $db->query("DROP TABLE IF EXISTS `us_rebrand_menu_backups`");
+  $db->query("DROP TABLE IF EXISTS `us_rebrand_site_backups`");
+  usSuccess('ReBrand: Dropped plugin backup tables.');
+} catch (Exception $e) {
+  usError('ReBrand: Failed to drop tables — '.$e->getMessage());
+  $hadError = true;
+}
+
+// 3) Delete plugin-created files/directories
+//    a) icons directory
+if (is_dir($iconsDirFs)) {
+  rb_rrmdir($iconsDirFs);
+  if (!is_dir($iconsDirFs)) {
+    usSuccess('ReBrand: Removed icons directory.');
+  } else {
+    usError('ReBrand: Failed to remove icons directory.');
+    $hadError = true;
+  }
+}
+//    b) plugin storage (versions, etc.)
+if (is_dir($pluginStorageDir)) {
+  rb_rrmdir($pluginStorageDir);
+  if (!is_dir($pluginStorageDir)) {
+    usSuccess('ReBrand: Removed plugin storage directory.');
+  } else {
+    usError('ReBrand: Failed to remove plugin storage directory.');
+    $hadError = true;
+  }
+}
+
+// 4) Optionally remove head_tags.php if no restore requested and the file looks auto-generated
+if (!$restoreHead && is_file($headFile)) {
+  $body = @file_get_contents($headFile);
+  if (is_string($body) && strpos($body, 'Auto-generated by ReBrand plugin') !== false) {
+    if (@unlink($headFile)) {
+      usSuccess('ReBrand: Removed auto-generated head_tags.php.');
+    } else {
+      usError('ReBrand: Could not remove head_tags.php.');
+      $hadError = true;
     }
   }
 }
 
-///////////////////////////////////////////////////////////////
-// Minimal UI for Plugin Manager context (no headers/footers)
-///////////////////////////////////////////////////////////////
-?>
-<div class="card">
-  <div class="card-header"><strong>ReBrand — Uninstall</strong></div>
-  <div class="card-body">
-    <?php if (!empty($messages)) : ?>
-      <div class="alert alert-success">
-        <?php foreach ($messages as $m): ?>
-          <div><?= htmlspecialchars($m, ENT_QUOTES, 'UTF-8') ?></div>
-        <?php endforeach; ?>
-      </div>
-    <?php endif; ?>
+// 5) Final messaging
+if ($hadError) {
+  usError('ReBrand purge completed with some errors. Review messages above.');
+} else {
+  usSuccess('ReBrand purge completed successfully.');
+}
 
-    <?php if (!empty($errors)) : ?>
-      <div class="alert alert-danger">
-        <?php foreach ($errors as $e): ?>
-          <div><?= htmlspecialchars($e, ENT_QUOTES, 'UTF-8') ?></div>
-        <?php endforeach; ?>
-      </div>
-    <?php endif; ?>
-
-    <p>Choose how you want to remove <strong>ReBrand</strong>:</p>
-
-    <form method="post" class="mb-3">
-      <input type="hidden" name="action" value="disable">
-      <?php if (class_exists('Token') && method_exists('Token', 'generate')): ?>
-        <input type="hidden" name="csrf" value="<?= Token::generate(); ?>">
-      <?php endif; ?>
-      <button type="submit" class="btn btn-warning">
-        Disable &amp; Keep Data
-      </button>
-      <small class="text-muted d-block mt-1">
-        Turns off header/menu integration but leaves settings, backups, and assets on disk.
-      </small>
-    </form>
-
-    <form method="post" onsubmit="return confirm('This will drop plugin tables and remove generated files. Continue?');">
-      <input type="hidden" name="action" value="purge">
-      <?php if (class_exists('Token') && method_exists('Token', 'generate')): ?>
-        <input type="hidden" name="csrf" value="<?= Token::generate(); ?>">
-      <?php endif; ?>
-      <button type="submit" class="btn btn-danger">
-        Purge Everything (Restore &amp; Drop)
-      </button>
-      <small class="text-muted d-block mt-1">
-        Attempts to restore <code>usersc/includes/head_tags.php</code> from the last backup, then drops plugin tables and deletes <code>users/images/rebrand/</code>.
-      </small>
-    </form>
-
-    <p class="mt-3">
-      Return to Plugin Manager:
-      <a href="<?= $us_url_root ?>users/admin.php?view=plugins_config&plugin=rebrand">
-        <?= $us_url_root ?>users/admin.php?view=plugins_config&plugin=rebrand
-      </a>
-    </p>
-  </div>
-</div>
+// No redirect — Plugin Manager controls the flow.
+/*
+ * If you want to drive this from a form, post to:
+ *   users/admin.php?view=plugins_config&plugin=rebrand&action=uninstall
+ * with fields:
+ *   <input type="hidden" name="csrf" value="<?=Token::generate()?>">
+ *   <input type="hidden" name="purge" value="1">
+ *   <input type="hidden" name="restore_head" value="1">  // optional
+ */

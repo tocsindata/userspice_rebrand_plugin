@@ -6,12 +6,13 @@
   <release_date>2025-09-24</release_date>
 
   <author>Tocsin Data</author>
-  <website>https://tocsindata.com/</website>
-  <category>Branding</category>
+  <website>https://tocsindata.io/</website>
+  <category>Appearance</category>
 
   <description>
-    Admin UI to rebrand a UserSpice 5 site: upload icons/logos, patch head tags (Open Graph, Twitter, favicons), edit core settings, 
-    and snapshot/restore files, settings, and menus with one-click backups.
+    ReBrand for UserSpice 5: centralized branding tools (head tags/meta, icons/favicons, menu labels, and site
+    settings) with automatic backups and cache-busting. Admin-only (User ID 1). No theme chrome injected; works
+    inside the Plugin Manager view.
   </description>
 
   <!-- Compatibility -->
@@ -24,7 +25,6 @@
 
   <!-- Button text in Plugin Manager -->
   <button>ReBrand</button>
-  <fa_icon>fa fa-paint-brush</fa_icon>
 
   <!-- Database tables created/used by the plugin -->
   <db_tables>
