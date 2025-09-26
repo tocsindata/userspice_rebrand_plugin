@@ -109,21 +109,18 @@ $do = $_GET['do'];
 // 1) Save Settings / Revert / Export
 // ===================================================
 if ($do === 'save_settings') {
-  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { die('Invalid request.'); }
-  if (!Token::check($_POST['csrf'] ?? '')) { die('CSRF token invalid.'); }
+  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { usError('Invalid request.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand'); exit; }
+  if (!Token::check($_POST['csrf'] ?? ''))   { usError('CSRF token invalid.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand'); exit; }
 
   $db = DB::getInstance();
 
-  // Fetch current snapshot
-  $current = [
-    'site_name'     => '',
-    'site_url'      => '',
-    'copyright'     => '',
-    'contact_email' => '',
-  ];
+  // Fetch current snapshot + detect row id
+  $current = ['site_name'=>'','site_url'=>'','copyright'=>'','contact_email'=>''];
+  $settingsId = null;
   try {
     $row = $db->query("SELECT * FROM settings LIMIT 1")->first();
     if ($row) {
+      $settingsId = (int)$row->id;
       $current = [
         'site_name'     => (string)($row->site_name ?? ''),
         'site_url'      => (string)($row->site_url ?? ''),
@@ -131,40 +128,39 @@ if ($do === 'save_settings') {
         'contact_email' => (string)($row->contact_email ?? ''),
       ];
     }
-  } catch (Exception $e) { /* continue */ }
+  } catch (Exception $e) { /* ignore */ }
 
-  // Revert from latest backup
+  // Revert
   if (isset($_POST['revert']) && $_POST['revert'] == '1') {
     try {
       $bak = $db->query("SELECT * FROM us_rebrand_site_backups ORDER BY took_at DESC, id DESC LIMIT 1")->first();
       if ($bak) {
-        $db->update('settings', 1, [
+        $payload = [
           'site_name'     => (string)$bak->site_name,
           'site_url'      => (string)$bak->site_url,
           'copyright'     => (string)$bak->copyright,
           'contact_email' => (string)$bak->contact_email,
-        ]);
+        ];
+        if ($settingsId) $db->update('settings', $settingsId, $payload);
+        else $db->insert('settings', $payload);
         usSuccess('Settings restored from last backup.');
       } else {
         usError('No settings backup found to restore.');
       }
-    } catch (Exception $e) {
-      usError('Failed to restore settings: '.$e->getMessage());
-    }
+    } catch (Exception $e) { usError('Failed to restore settings: '.$e->getMessage()); }
     Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand'); exit;
   }
 
-  // Export JSON
+  // Export JSON (download)
   if (isset($_POST['export']) && $_POST['export'] == '1') {
     $json = json_encode($current, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES);
     header('Content-Type: application/json');
     header('Content-Disposition: attachment; filename="rebrand_settings_export.json"');
     header('Content-Length: '.strlen($json));
-    echo $json;
-    exit;
+    echo $json; exit;
   }
 
-  // Save: backup then update
+  // Backup current then save
   rb_backup_settings($current, 'pre-update');
 
   $site_name     = trim((string)($_POST['site_name'] ?? ''));
@@ -173,20 +169,18 @@ if ($do === 'save_settings') {
   $contact_email = trim((string)($_POST['contact_email'] ?? ''));
 
   if ($site_name === '') { usError('Site Name cannot be empty.'); }
-  if ($site_url !== '' && !preg_match('#^https?://#i', $site_url)) {
-    usError('Site URL should start with http:// or https://');
-  }
-  if ($contact_email !== '' && !filter_var($contact_email, FILTER_VALIDATE_EMAIL)) {
-    usError('Contact Email is not a valid email address.');
-  }
+  if ($site_url !== '' && !preg_match('#^https?://#i', $site_url)) { usError('Site URL should start with http:// or https://'); }
+  if ($contact_email !== '' && !filter_var($contact_email, FILTER_VALIDATE_EMAIL)) { usError('Contact Email is not valid.'); }
 
   try {
-    $db->update('settings', 1, [
+    $payload = [
       'site_name'     => $site_name,
       'site_url'      => $site_url,
       'copyright'     => $copyright,
       'contact_email' => $contact_email,
-    ]);
+    ];
+    if ($settingsId) $db->update('settings', $settingsId, $payload);
+    else $db->insert('settings', $payload);
     usSuccess('Settings saved.');
   } catch (Exception $e) {
     usError('Failed to save settings: '.$e->getMessage());
@@ -199,8 +193,8 @@ if ($do === 'save_settings') {
 // 2) Upload Brand Assets (manual)
 // ===================================================
 if ($do === 'upload_assets') {
-  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { die('Invalid request.'); }
-  if (!Token::check($_POST['csrf'] ?? '')) { die('CSRF token invalid.'); }
+  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { usError('Invalid request.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand'); exit; }
+  if (!Token::check($_POST['csrf'] ?? ''))   { usError('CSRF token invalid.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand'); exit; }
 
   $db = DB::getInstance();
   $changed = false;
@@ -322,8 +316,8 @@ if ($do === 'upload_assets') {
 // 3) Patch Head (write users/includes/head_tags.php)
 // ===================================================
 if ($do === 'patch_head') {
-  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { die('Invalid request.'); }
-  if (!Token::check($_POST['csrf'] ?? '')) { die('CSRF token invalid.'); }
+  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { usError('Invalid request.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand'); exit; }
+  if (!Token::check($_POST['csrf'] ?? ''))   { usError('CSRF token invalid.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand'); exit; }
 
   $desc    = preg_replace("/\r\n?/", "\n", (string)($_POST['meta_description'] ?? ''));
   $author  = trim((string)($_POST['meta_author'] ?? ''));
@@ -414,8 +408,8 @@ if ($do === 'patch_head') {
 // 4) Restore: FILE backup
 // ===================================================
 if ($do === 'restore_file_backup') {
-  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { die('Invalid request.'); }
-  if (!Token::check($_POST['csrf'] ?? '')) { die('CSRF token invalid.'); }
+  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { usError('Invalid request.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand&panel=backups'); exit; }
+  if (!Token::check($_POST['csrf'] ?? ''))   { usError('CSRF token invalid.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand&panel=backups'); exit; }
 
   $backupId = (int)($_POST['backup_id'] ?? 0);
   if ($backupId <= 0) {
@@ -440,8 +434,8 @@ if ($do === 'restore_file_backup') {
 // 5) Restore: SITE SETTINGS backup
 // ===================================================
 if ($do === 'restore_site_backup') {
-  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { die('Invalid request.'); }
-  if (!Token::check($_POST['csrf'] ?? '')) { die('CSRF token invalid.'); }
+  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { usError('Invalid request.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand&panel=backups'); exit; }
+  if (!Token::check($_POST['csrf'] ?? ''))   { usError('CSRF token invalid.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand&panel=backups'); exit; }
 
   $backupId = (int)($_POST['backup_id'] ?? 0);
   if ($backupId <= 0) {
@@ -466,8 +460,8 @@ if ($do === 'restore_site_backup') {
 // 6) Restore: MENU backup
 // ===================================================
 if ($do === 'restore_menu_backup') {
-  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { die('Invalid request.'); }
-  if (!Token::check($_POST['csrf'] ?? '')) { die('CSRF token invalid.'); }
+  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { usError('Invalid request.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand&panel=backups'); exit; }
+  if (!Token::check($_POST['csrf'] ?? ''))   { usError('CSRF token invalid.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand&panel=backups'); exit; }
 
   $backupId = (int)($_POST['backup_id'] ?? 0);
   if ($backupId <= 0) {
@@ -476,13 +470,6 @@ if ($do === 'restore_menu_backup') {
   }
 
   require_once __DIR__.'/../classes/BackupService.php';
-
-  try {
-    $svc = new BackupService();
-    $svc->restoreMenusFromBackupId($$backupId); // typo guard would cause error; keep correct:
-  } catch (Throwable $e) {
-    // correcting call:
-  }
 
   try {
     $svc = new BackupService();
@@ -499,8 +486,8 @@ if ($do === 'restore_menu_backup') {
 // 7) Menu Apply (writer)
 // ===================================================
 if ($do === 'menu_apply') {
-  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { die('Invalid request.'); }
-  if (!Token::check($_POST['csrf'] ?? '')) { die('CSRF token invalid.'); }
+  if ($_SERVER['REQUEST_METHOD'] !== 'POST') { usError('Invalid request.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand&panel=menus'); exit; }
+  if (!Token::check($_POST['csrf'] ?? ''))   { usError('CSRF token invalid.'); Redirect::to($us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand&panel=menus'); exit; }
 
   $raw = (string)($_POST['rules_json'] ?? '');
   $rules = json_decode($raw, true);

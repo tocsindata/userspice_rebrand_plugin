@@ -1,7 +1,6 @@
 <?php
 // usersc/plugins/rebrand/configure.php
 // No header/footer includes here — the Plugin Manager provides the chrome.
-ini_set('display_errors','1'); ini_set('display_startup_errors','1'); error_reporting(E_ALL);
 
 // Load UserSpice if not already loaded (keeps plugin usable both inside and outside the manager)
 if (!class_exists('DB')) {
@@ -21,13 +20,16 @@ if (!isset($user) || !$user->isLoggedIn() || (int)$user->data()->id !== 1) {
   exit;
 }
 
-// If a form was submitted with &do=..., route to our process file and exit
-if (isset($_GET['do']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+/**
+ * Always delegate any request with &do=... to our process router.
+ * This ensures form POSTS from Settings/Assets/Menus actually run.
+ */
+if (isset($_GET['do'])) {
   require __DIR__ . '/admin/process.php';
   exit;
 }
 
-// Optional: quick settings read (safe if schema changes)
+// Optional: read site settings (non-fatal if schema differs)
 $siteSettings = [];
 try {
   $qry = $db->query("SELECT * FROM settings");
@@ -40,12 +42,10 @@ try {
     ];
   }
 } catch (Exception $e) {
-  // non-fatal
+  // ignore
 }
 
-$title = 'ReBrand';
-
-// Panel router
+// Router for sub-panels
 $panel = isset($_GET['panel']) ? strtolower((string)$_GET['panel']) : 'settings';
 $base  = $us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand';
 ?>
@@ -65,8 +65,7 @@ $base  = $us_url_root.'users/admin.php?view=plugins_config&plugin=rebrand';
 <?php
 $root = __DIR__ . '/admin/';
 switch ($panel) {
-  case 'menus':   require $root . 'menus.php';   break;
-  case 'backups': require $root . 'backups.php'; break;
-  case 'settings':
-  default:        require $root . 'settings.php'; break;
+  case 'menus':   require $root.'menus.php';   break;
+  case 'backups': require $root.'backups.php'; break;
+  default:        require $root.'settings.php';
 }
