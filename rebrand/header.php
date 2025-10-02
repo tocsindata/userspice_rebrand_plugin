@@ -85,6 +85,5 @@ if(!function_exists('rebrand_header')){
     return ;
   }
 }
-
-addHook("menu_header","rebrand_social_menu");
-addHook("header","rebrand_header");
+rebrand_social_menu();
+rebrand_header() ; 
