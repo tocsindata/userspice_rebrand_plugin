@@ -20,24 +20,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   }
 }
 
-// -----------------------------------------------------------------------------
-// MENU: ensure "rebrand_social" exists exactly like your earlier snippet
-// -----------------------------------------------------------------------------
-$sql = "SELECT count(*) AS MENU_EXISTS FROM menus WHERE menu_name LIKE 'rebrand_social' LIMIT 1";
-$db->query($sql);
-$r = $db->first();
-if ((int)($r->MENU_EXISTS ?? 0) < 1) {
-  $db->query("INSERT INTO `menus` (`menu_name`,`menu_location`,`menu_order`,`created_at`,`updated_at`)
-              VALUES ('rebrand_social','header',1,NOW(),NOW())");
+/* -----------------------------------------------------------------------------
+ * MENU: ensure "rebrand_social" exists in STANDARD US tables:
+ *   - us_menus           (menu container)
+ *   - us_menu_items      (items)
+ * ---------------------------------------------------------------------------*/
+
+// 1) Create menu container if missing
+$menuRow = $db->query(
+  "SELECT id FROM `us_menus` WHERE `menu_name` = 'rebrand_social' LIMIT 1"
+)->first();
+
+if (!$menuRow) {
+  // Location: 'header' is fine; adjust if you prefer a different slot
+  $db->query(
+    "INSERT INTO `us_menus` (`menu_name`, `menu_location`, `menu_order`, `created_at`, `updated_at`)
+     VALUES ('rebrand_social','header',1,NOW(),NOW())"
+  );
+  $menuRow = $db->query(
+    "SELECT id FROM `us_menus` WHERE `menu_name` = 'rebrand_social' LIMIT 1"
+  )->first();
   $flash_social_created = true;
 }
-$sql = "SELECT `id` FROM menus WHERE `menu_name` LIKE 'rebrand_social' LIMIT 1";
-$db->query($sql);
-$rebrand_menu_id = (int)$db->first()->id;
 
-// -----------------------------------------------------------------------------
-// ACTIONS
-// -----------------------------------------------------------------------------
+$rebrand_menu_id = (int)($menuRow->id ?? 0);
+
+// Helper: HTML escape
+function h($s){ return htmlspecialchars($s ?? '', ENT_QUOTES); }
+
+/* -----------------------------------------------------------------------------
+ * ACTIONS
+ * ---------------------------------------------------------------------------*/
 
 // 1) Save site settings (single-row table)
 if (($_POST['rebrand_update'] ?? '') === 'site_settings') {
@@ -47,7 +60,7 @@ if (($_POST['rebrand_update'] ?? '') === 'site_settings') {
   $copyright   = trim($_POST['copyright'] ?? '');
 
   $db->query(
-    "UPDATE settings SET site_name = ?, site_url = ?, copyright = ? WHERE id = ? LIMIT 1",
+    "UPDATE `settings` SET `site_name` = ?, `site_url` = ?, `copyright` = ? WHERE `id` = ? LIMIT 1",
     [$site_name, $site_url, $copyright, $settings_id]
   );
   $flash_settings_ok = true;
@@ -83,9 +96,11 @@ if (($_POST['rebrand_update'] ?? '') === 'social_menu_item') {
     $link_target = in_array($_POST['link_target'] ?? '_self', ['_self','_blank'], true) ? $_POST['link_target'] : '_self';
 
     if ($menu_item_id > 0) {
-      // keep existing type/permissions/tags as-is
+      // Keep existing type/permissions/tags as-is
       $db->query(
-        "UPDATE `us_menu_items` SET `label`=?, `link`=?, `icon_class`=?, `link_target`=? WHERE `id`=? LIMIT 1",
+        "UPDATE `us_menu_items`
+           SET `label` = ?, `link` = ?, `icon_class` = ?, `link_target` = ?
+         WHERE `id` = ? LIMIT 1",
         [$label, $link, $icon_class, $link_target, $menu_item_id]
       );
       $flash_social_updated = true;
@@ -93,7 +108,7 @@ if (($_POST['rebrand_update'] ?? '') === 'social_menu_item') {
   }
 }
 
-// 4) Social menu: add new item (default schema fields)
+// 4) Social menu: add new item (append to end of list)
 if (($_POST['rebrand_update'] ?? '') === 'social_menu_add') {
   $label       = trim($_POST['label'] ?? '');
   $link        = trim($_POST['link'] ?? '');
@@ -101,6 +116,14 @@ if (($_POST['rebrand_update'] ?? '') === 'social_menu_add') {
   $link_target = in_array($_POST['link_target'] ?? '_self', ['_self','_blank'], true) ? $_POST['link_target'] : '_self';
 
   if ($rebrand_menu_id > 0 && $label !== '' && $link !== '') {
+    // Determine next display_order
+    $nextOrder = (int)($db->query(
+      "SELECT COALESCE(MAX(`display_order`), 0) + 1 AS next_order
+         FROM `us_menu_items`
+        WHERE `menu` = ?",
+      [$rebrand_menu_id]
+    )->first()->next_order ?? 1);
+
     $db->insert('us_menu_items', [
       // id omitted (AUTO_INCREMENT)
       'menu'          => $rebrand_menu_id,
@@ -112,10 +135,10 @@ if (($_POST['rebrand_update'] ?? '') === 'social_menu_add') {
       'a_class'       => '',
       'link_target'   => $link_target,
       'parent'        => 0,
-      'display_order' => 1,
+      'display_order' => $nextOrder,
       'disabled'      => 0,
       'permissions'   => '["0"]', // visible to all
-      'tags'          => '""',
+      'tags'          => '',      // keep empty string; US handles tags variably
     ]);
     $flash_social_added = true;
   } else {
@@ -153,29 +176,39 @@ $ht_current = is_file($htaccess_path) ? file_get_contents($htaccess_path) :
 # Add your rewrite rules or security headers here
 ";
 
-// -----------------------------------------------------------------------------
-// READ current data
-// -----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
+ * READ current data
+ * ---------------------------------------------------------------------------*/
 
 // Settings row
 $settings_id = (int)($_POST['settings_id'] ?? 1);
-$settingsRow = $db->query("SELECT id, site_name, site_url, copyright FROM settings WHERE id = ? LIMIT 1", [$settings_id])->first();
+$settingsRow = $db->query(
+  "SELECT `id`, `site_name`, `site_url`, `copyright`
+     FROM `settings` WHERE `id` = ? LIMIT 1",
+  [$settings_id]
+)->first();
+
 if (!$settingsRow) {
-  // fallback to id=1 if requested id missing
   $settings_id = 1;
-  $settingsRow = $db->query("SELECT id, site_name, site_url, copyright FROM settings WHERE id = 1 LIMIT 1")->first();
+  $settingsRow = $db->query(
+    "SELECT `id`, `site_name`, `site_url`, `copyright`
+       FROM `settings` WHERE `id` = 1 LIMIT 1"
+  )->first();
 }
 $cur_site_name = $settingsRow->site_name ?? '';
 $cur_site_url  = $settingsRow->site_url  ?? '';
 $cur_copyright = $settingsRow->copyright ?? '';
 
-// Social items for this menu
-$social_items = $db->query(
-  "SELECT * FROM `us_menu_items` WHERE `disabled` = 0 AND `menu` = ? ORDER BY `display_order` DESC, `id` DESC",
-  [$rebrand_menu_id]
-)->results();
-
-function h($s){ return htmlspecialchars($s ?? '', ENT_QUOTES); }
+// Social items for this menu (ordered)
+$social_items = [];
+if ($rebrand_menu_id > 0) {
+  $social_items = $db->query(
+    "SELECT * FROM `us_menu_items`
+      WHERE `menu` = ?
+      ORDER BY `display_order` ASC, `id` ASC",
+    [$rebrand_menu_id]
+  )->results();
+}
 ?>
 <div class="content mt-3">
   <div class="row"><div class="col-12">
@@ -278,7 +311,7 @@ function h($s){ return htmlspecialchars($s ?? '', ENT_QUOTES); }
       <?php if (!empty($flash_social_added)):   ?><div class="alert alert-success">Menu item added.</div><?php endif; ?>
       <?php if (!empty($flash_social_add_err)): ?><div class="alert alert-danger"><?= h($flash_social_add_err) ?></div><?php endif; ?>
 
-      <?php if ($social_items): ?>
+      <?php if (!empty($social_items)): ?>
         <?php foreach ($social_items as $it): ?>
           <div class="card mb-2"><div class="card-body">
             <form class="form-horizontal" method="post">
