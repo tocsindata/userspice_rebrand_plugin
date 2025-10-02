@@ -68,19 +68,62 @@ if (($_POST['rebrand_update'] ?? '') === 'site_settings') {
 
 // 2) Upload brand assets (overwrite)
 if (($_POST['rebrand_update'] ?? '') === 'brand_assets') {
+  // helper to decode upload errors
+  $uploadErr = static function($code){
+    $map = [
+      UPLOAD_ERR_INI_SIZE=>'File exceeds upload_max_filesize',
+      UPLOAD_ERR_FORM_SIZE=>'File exceeds MAX_FILE_SIZE',
+      UPLOAD_ERR_PARTIAL=>'File was only partially uploaded',
+      UPLOAD_ERR_NO_FILE=>'No file uploaded',
+      UPLOAD_ERR_NO_TMP_DIR=>'Missing temporary folder',
+      UPLOAD_ERR_CANT_WRITE=>'Failed to write file to disk',
+      UPLOAD_ERR_EXTENSION=>'A PHP extension stopped the file upload',
+    ];
+    return $map[$code] ?? 'Unknown upload error';
+  };
+
   // favicon.ico at web root
-  if (!empty($_FILES['favicon']) && $_FILES['favicon']['error'] === UPLOAD_ERR_OK) {
-    $tmp  = $_FILES['favicon']['tmp_name'];
-    $dest = $abs_us_root.$us_url_root.'favicon.ico';
-    @move_uploaded_file($tmp, $dest) ? $flash_favicon_ok = true : $flash_favicon_err = 'Failed to move favicon.';
+  if (!empty($_FILES['favicon']) && $_FILES['favicon']['error'] !== UPLOAD_ERR_NO_FILE) {
+    if ($_FILES['favicon']['error'] === UPLOAD_ERR_OK && is_uploaded_file($_FILES['favicon']['tmp_name'])) {
+      $tmp  = $_FILES['favicon']['tmp_name'];
+      $dest = rtrim($abs_us_root.$us_url_root, '/').'/favicon.ico';
+      if (@move_uploaded_file($tmp, $dest)) {
+        @chmod($dest, 0644);
+        $flash_favicon_ok = true;
+      } else {
+        $flash_favicon_err = 'Failed to move favicon to '.$dest;
+      }
+    } else {
+      $flash_favicon_err = $uploadErr($_FILES['favicon']['error']);
+    }
   }
+
   // users/images/logo.png (UserSpice default path)
-  if (!empty($_FILES['logo']) && $_FILES['logo']['error'] === UPLOAD_ERR_OK) {
-    $tmp  = $_FILES['logo']['tmp_name'];
-    $dest = $abs_us_root.$us_url_root.'users/images/logo.png';
-    @move_uploaded_file($tmp, $dest) ? $flash_logo_ok = true : $flash_logo_err = 'Failed to move logo.';
+  if (!empty($_FILES['logo']) && $_FILES['logo']['error'] !== UPLOAD_ERR_NO_FILE) {
+    if ($_FILES['logo']['error'] === UPLOAD_ERR_OK && is_uploaded_file($_FILES['logo']['tmp_name'])) {
+      $tmp     = $_FILES['logo']['tmp_name'];
+
+      // Ensure the images directory exists (filesystem path)
+      $imgDir  = rtrim($abs_us_root.$us_url_root, '/').'/users/images';
+      if (!is_dir($imgDir)) {
+        @mkdir($imgDir, 0755, true);
+      }
+
+      $destFs  = $imgDir.'/logo.png';                   // filesystem target
+      if (@move_uploaded_file($tmp, $destFs)) {
+        @chmod($destFs, 0644);
+        $flash_logo_ok  = true;
+        // Bust caches by touching mtime (we’ll use it in the preview/UI if you like)
+        $logo_version = (string)@filemtime($destFs);
+      } else {
+        $flash_logo_err = 'Failed to move logo to '.$destFs;
+      }
+    } else {
+      $flash_logo_err = $uploadErr($_FILES['logo']['error']);
+    }
   }
 }
+
 
 // 3) Social menu: update/delete existing item
 if (($_POST['rebrand_update'] ?? '') === 'social_menu_item') {
