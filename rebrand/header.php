@@ -1,90 +1,85 @@
 <?php
-// usersc/plugins/rebrand/header.php
+// file rebrand/header.php
+if(!function_exists('rebrand_social_menu')){
+  function rebrand_social_menu(){
+    $db = DB::getInstance(); 
+    // get rebrand social menu id
+    $menu_id = 0 ; // default to 0
+    $sql = "SELECT `id` FROM `us_menus` WHERE `menu_name` LIKE 'rebrand_social'";
+    $db->query($sql);
+    $results = $db->results();
+    foreach($results as $row){
+      $menu_id = $row->id;
+    }
+    if($menu_id == 0){
+      return; // just do nothing if no menu found
+    }
 
-// 1) Ensure the brand area for menu id=1 includes our mount <div id="rebrandsocial">
-if (!function_exists('rebrand_social_mount_in_brand')) {
-  function rebrand_social_mount_in_brand() {
-    // Only let UID 1 mutate DB state
-    global $user, $abs_us_root, $us_url_root;
-    if (!isset($user) || (int)($user->data()->id ?? 0) !== 1) return;
-
-    $db = DB::getInstance();
-
-    // Prepare brand HTML (logo + mount) — this ONLY updates us_menus.id = 1
-    $siteName = '';
-    if (function_exists('getSettings')) {
+    // second get the site name
+    $site_name = '';
+    if(function_exists('getSettings')){
       $settings = getSettings();
-      $siteName = isset($settings->site_name) ? (string)$settings->site_name : '';
+      if(isset($settings->site_name)){
+        $site_name = $settings->site_name;
+      }
     }
-
-    $logoFs  = rtrim($abs_us_root, '/').$us_url_root.'users/images/logo.png';
-    $logoWeb = $us_url_root.'users/images/logo.png';
-    $v       = @file_exists($logoFs) ? @filemtime($logoFs) : time();
-
-    $raw = '<a href="'.$us_url_root.'"><img src="'.$logoWeb.'?v='.$v.
-           '" alt="'.htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8').'" class="img-fluid" /></a>'.
-           '<div id="rebrandsocial"></div>';
-
-    // If your navbar prints brand_html raw, store encoded to be safe
-    $brandHtml = htmlspecialchars($raw, ENT_QUOTES, 'UTF-8');
-
-    // Update only if different
-    $q = $db->query("SELECT brand_html FROM us_menus WHERE id = ?", [1]);
-    if ($q->count() && (string)$q->first()->brand_html !== $brandHtml) {
-      $db->query("UPDATE us_menus SET brand_html = ? WHERE id = 1", [$brandHtml]);
+    /*
+        <a href="{{root}}"><img src="{{root}}users/images/logo.png?v=4" alt="YOUR SITE NAME" class="img-fluid" /></a><div id="rebrandsocial"></div>
+    */
+    $version = filemtime($_SERVER['DOCUMENT_ROOT'].'/users/images/logo.png');
+    $menu_string = '<a href="{{root}}"><img src="{{root}}users/images/logo.png?v='.$version.'" alt="'.$site_name.'" class="img-fluid" /></a><div id="rebrandsocial"></div>';
+    $brand_html = html_encode($menu_string, ENT_QUOTES);
+    // see if this brand_html is already in the table
+    $sql = 'SELECT COUNT(*) as `done`  FROM `us_menus` WHERE `id` = 1 AND `brand_html` LIKE "'.$brand_html.'" ORDER BY `brand_html` ASC ';
+    $db->query($sql);
+    $results = $db->results();
+    foreach($results as $row){
+      if($row->done > 0){
+        return; // already done
+      }
     }
+    // update the menu
+    $sql = 'UPDATE `us_menus` SET `brand_html` = "'.$brand_html.'" WHERE `id` = 1 ';
+    $db->query($sql);
+    return ;
   }
 }
 
-// 2) Hydrate #rebrandsocial with items from the separate 'rebrand_social' menu (READ-ONLY)
-if (!function_exists('rebrand_social_hydrate')) {
-  function rebrand_social_hydrate() {
-    $db = DB::getInstance();
-
-    // Lookup the id of the rebrand_social menu (read-only)
-    $menuId = 0;
-    $q = $db->query("SELECT id FROM us_menus WHERE menu_name = ?", ['rebrand_social']);
-    if ($q->count()) $menuId = (int)$q->first()->id;
-    if ($menuId === 0) return;
-
-    // Pull enabled items in order (READ ONLY from us_menu_items)
-    $items = $db->query(
-      "SELECT label, link, icon_class, link_target
-         FROM us_menu_items
-        WHERE menu = ? AND disabled = 0
-     ORDER BY display_order ASC",
-      [$menuId]
-    )->results();
-
-    // Build icon links
-    $html = '';
-    foreach ($items as $row) {
-      $label = htmlspecialchars($row->label ?? '', ENT_QUOTES, 'UTF-8');
-      $href  = htmlspecialchars($row->link ?? '#', ENT_QUOTES, 'UTF-8');
-      $icon  = htmlspecialchars($row->icon_class ?? '', ENT_QUOTES, 'UTF-8');
-      $tgt   = htmlspecialchars($row->link_target ?? '', ENT_QUOTES, 'UTF-8');
-      $rel   = ($tgt === '_blank') ? ' rel="noopener"' : '';
-
-      $html .= '<a class="rebrand-social-link" href="'.$href.'" title="'.$label.
-               '" target="'.$tgt.'"'.$rel.'><i class="'.$icon.' fa-2x" aria-hidden="true"></i>'.
-               '<span class="visually-hidden">'.$label.'</span></a> ';
+if(!function_exists('rebrand_header')){
+  function rebrand_header(){
+    // add javascript to the header to populate the rebrand social menu ....
+    $db = DB::getInstance(); 
+    // get rebrand social menu id
+    $menu_id = 0 ; // default to 0
+    $sql = "SELECT `id` FROM `us_menus` WHERE `menu_name` LIKE 'rebrand_social'";
+    $db->query($sql);
+    $results = $db->results();
+    foreach($results as $row){
+      $menu_id = $row->id;
+    }   
+    if($menu_id == 0){
+      return; // just do nothing if no menu found
     }
 
-    // Safely inject via JSON (no addslashes issues)
-    $payload = json_encode($html, JSON_UNESCAPED_SLASHES);
-    if ($payload === false) return;
+    $sql = "SELECT * FROM `us_menu_items` WHERE `menu` = ".$menu_id." AND `disabled` = 0 ORDER BY `us_menu_items`.`display_order` ASC";
+    $db->query($sql);
+    $results = $db->results();
+    $menu_string = '';
+    foreach($results as $row){
+        $menu_string .= '<a href="'.$row->link.'" title="'.$row->title.'" target="'.$row->target.'"><i class="'.$row->icon.' fa-2x"></i></a> ';
+        }
 
-    echo "<script>
-      document.addEventListener('DOMContentLoaded', function () {
-        var mount = document.getElementById('rebrandsocial');
-        if (mount) { mount.innerHTML = {$payload}; }
-      });
-    </script>";
+    echo '<script>
+    document.addEventListener("DOMContentLoaded", function(){
+      var rebrandDiv = document.getElementById("rebrandsocial");
+      if(rebrandDiv){
+        rebrandDiv.innerHTML = \''.addslashes($menu_string).'\';
+      }
+    });    
+    </script>';
+    return ;
   }
 }
 
-// Hooks:
-// - First hook (admin only) writes the brand mount into menu id=1 if needed.
-// - Second hook runs for everyone and populates from the separate rebrand_social menu.
-addHook('menu_header', 'rebrand_social_mount_in_brand');
-addHook('header', 'rebrand_social_hydrate');
+addHook("menu_header","rebrand_social_menu");
+addHook("header","rebrand_header");
