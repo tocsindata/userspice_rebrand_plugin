@@ -34,7 +34,6 @@ This plugin lets you quickly rebrand a UserSpice 5 site with your own name, logo
   - `<webroot>/users/images/logo.png`
   - `<webroot>/usersc/includes/head_tags.php`
   - `<webroot>/.htaccess`
-  - plugin form builder
   - not required, but suggested plugin getsettings
 
 ## Installation

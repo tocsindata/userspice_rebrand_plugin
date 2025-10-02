@@ -1,5 +1,10 @@
 <?php
 // file rebrand/header.php
+// error reporting on
+ini_set('display_errors', 1); 
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
 if(!function_exists('rebrand_social_menu')){
   function rebrand_social_menu(){
     $db = DB::getInstance(); 
