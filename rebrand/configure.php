@@ -2,12 +2,18 @@
 // usersc/plugins/rebrand/configure.php
 // KISS edition: single file, no backups, no helpers, master-only.
 
-// -- Guards / Context
-if (!isset($user) || !is_object($user)) { die('User context not available.'); }
-if ((int)($user->data()->id ?? 0) !== 1) { Redirect::to($us_url_root.'users/admin.php'); } // master only
+<?php if (!in_array($user->data()->id, $master_account)) {
+  Redirect::to($us_url_root . 'users/admin.php');
+} //only allow master accounts to manage plugins! 
 
-include 'plugin_info.php';
+include "plugin_info.php";
 pluginActive($plugin_name);
+if (!empty($_POST)) {
+  if (!Token::check(Input::get('csrf'))) {
+    include($abs_us_root . $us_url_root . 'usersc/scripts/token_error.php');
+  }
+}
+
 
 $db   = DB::getInstance();
 $csrf = Token::generate();

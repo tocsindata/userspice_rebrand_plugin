@@ -1,11 +1,18 @@
 <?php
+// For security purposes, it is MANDATORY that this page be wrapped in the following
+// if statement. This prevents remote execution of this code.
 
+
+//Please jump donw to line 27 to see the example code.
 include "plugin_info.php";
 if (in_array($user->data()->id, $master_account) && pluginActive($plugin_name,true)){
+//all actions should be performed here.
 
+//check which updates have been installed
 $count = 0;
 $db = DB::getInstance();
 
+//Make sure the plugin is installed and get the existing updates
 $checkQ = $db->query("SELECT id,updates FROM us_plugins WHERE plugin = ?",array($plugin_name));
 $checkC = $checkQ->count();
 if($checkC > 0){
@@ -17,7 +24,11 @@ if($checkC > 0){
   }
 
 
-  $update = '00009';
+  //list your updates here from oldest at the top to newest at the bottom.
+  //Give your update a unique update number/code.
+
+  //here is an example
+  $update = '21.9.5'; // https://tocsindata.com/version
   if(!in_array($update,$existing)){
   logger($user->data()->id,"Migrations","$update migration triggered for $plugin_name");
 
@@ -25,6 +36,11 @@ if($checkC > 0){
   $count++;
   }
 
+
+
+
+
+  //after all updates are done. Keep this at the bottom.
   $new = json_encode($existing);
   $db->update('us_plugins',$check->id,['updates'=>$new,'last_check'=>date("Y-m-d H:i:s")]);
   if(!$db->error()) {
