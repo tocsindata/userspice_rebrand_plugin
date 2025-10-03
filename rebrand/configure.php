@@ -2,7 +2,7 @@
 // usersc/plugins/rebrand/configure.php
 // KISS edition: single file, no backups, no helpers, master-only.
 
-<?php if (!in_array($user->data()->id, $master_account)) {
+if (!in_array($user->data()->id, $master_account)) {
   Redirect::to($us_url_root . 'users/admin.php');
 } //only allow master accounts to manage plugins! 
 
