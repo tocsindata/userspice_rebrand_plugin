@@ -1,6 +1,17 @@
 <?php
 // usersc/plugins/rebrand/configure.php
 // KISS edition: single file, no backups, no helpers, master-only.
+// Put at the VERY TOP of usersc/plugins/rebrand/configure.php and uninstall.php (temporarily)
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+echo '<!-- Rebrand plugin: configure.php -->';
+register_shutdown_function(function () {
+  $e = error_get_last();
+  if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+    echo "<pre style='white-space:pre-wrap;background:#111;color:#eee;padding:12px;border-radius:8px'>FATAL: {$e['message']} in {$e['file']}:{$e['line']}</pre>";
+  }
+});
 
 if (!in_array($user->data()->id, $master_account)) {
   Redirect::to($us_url_root . 'users/admin.php');
