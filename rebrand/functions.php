@@ -85,3 +85,46 @@ if (!function_exists('rebrand_social_hydrate')) {
     </script>";
   }
 }
+
+
+if (!function_exists('rebrand_sync_plugin_row')) {
+  /**
+   * Ensure us_plugins row is present and consistent for the rebrand plugin.
+   * $status should be one of: 'installed', 'active', 'disabled' (your convention).
+   */
+  function rebrand_sync_plugin_row(string $status): void {
+    // Load plugin name/version the canonical way
+    require_once __DIR__ . '/plugin_info.php'; // defines $plugin_name, $plugin_version
+
+    // UserSpice DB instance (no globals)
+    $db = DB::getInstance();
+
+    // Prepare updates JSON from plugin_version
+    $updatesJson = null;
+    if (!empty($plugin_version)) {
+      // us_plugins.updates is a JSON array of versions
+      $updatesJson = json_encode([$plugin_version], JSON_UNESCAPED_SLASHES);
+    }
+
+    // Upsert the row
+    $existing = $db->query("SELECT id, updates FROM us_plugins WHERE plugin = ?", [$plugin_name])->first();
+
+    $now = date('Y-m-d H:i:s');
+
+    if ($existing && isset($existing->id)) {
+      // Prefer to overwrite with current version array
+      $db->update('us_plugins', (int)$existing->id, [
+        'status'     => $status,
+        'updates'    => $updatesJson,
+        'last_check' => $now,
+      ]);
+    } else {
+      $db->insert('us_plugins', [
+        'plugin'     => $plugin_name,
+        'status'     => $status,
+        'updates'    => $updatesJson,
+        'last_check' => $now,
+      ]);
+    }
+  }
+}
